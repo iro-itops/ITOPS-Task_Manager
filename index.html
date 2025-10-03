@@ -1,15 +1,58 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <title>IT Ops Task Generator (Realtime)</title>
+  <meta charset="UTF-8">
+  <title>IT Operations Task Generator</title>
   <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 p-6">
+  <div class="max-w-5xl mx-auto bg-white p-6 rounded-2xl shadow-lg">
+    <h1 class="text-2xl font-bold mb-4 text-center">IT Operations Task Generator</h1>
+
+    <!-- Daily Tasks -->
+    <div class="mb-6">
+      <h2 class="text-xl font-semibold mb-2">Daily Tasks</h2>
+      <div id="dailyTasks" class="space-y-2"></div>
+      <div class="mt-2">
+        <input id="newTask" type="text" placeholder="Add new daily task" class="border p-2 rounded w-2/3">
+        <button onclick="addTask()" class="bg-green-500 text-white px-4 py-2 rounded">Add</button>
+      </div>
+    </div>
+
+    <!-- Weekly / Monthly Tasks -->
+    <div class="mb-6">
+      <h2 class="text-xl font-semibold mb-2">Weekly Tasks</h2>
+      <textarea id="weeklyTasks" class="border p-2 rounded w-full h-24"></textarea>
+    </div>
+    <div class="mb-6">
+      <h2 class="text-xl font-semibold mb-2">Monthly Tasks</h2>
+      <textarea id="monthlyTasks" class="border p-2 rounded w-full h-24"></textarea>
+    </div>
+
+    <!-- Monitoring -->
+    <div class="mb-6">
+      <h2 class="text-xl font-semibold mb-2">Monitoring Schedule</h2>
+      <div id="monitoringSchedule" class="space-y-2"></div>
+    </div>
+
+    <!-- Buttons -->
+    <div class="flex space-x-4">
+      <button onclick="generateOutput()" class="bg-blue-500 text-white px-4 py-2 rounded">Generate Output</button>
+      <button onclick="resetAll()" class="bg-red-500 text-white px-4 py-2 rounded">Reset</button>
+    </div>
+
+    <!-- Output -->
+    <div class="mt-6">
+      <h2 class="text-xl font-semibold mb-2">Generated Output</h2>
+      <pre id="outputBox" class="border p-4 rounded bg-gray-50 whitespace-pre-wrap"></pre>
+    </div>
+  </div>
+
   <!-- Firebase -->
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-    import { getDatabase, ref, set, onValue, update, remove } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+    import { getDatabase, ref, set, onValue, update } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 
-    // --- Firebase Config (yours) ---
     const firebaseConfig = {
       apiKey: "AIzaSyC56asNTd04xhDU4OlnBHS4zNxj_aiiFhM",
       authDomain: "activity-log-275ce.firebaseapp.com",
@@ -23,256 +66,190 @@
     const app = initializeApp(firebaseConfig);
     const db = getDatabase(app);
 
-    // --- Members ---
-    const members = {
-      "IRO": "Ian Romero",
-      "RDE": "Rhizza De Guzman",
-      "FFA": "Felix Factor",
-      "NLA": "Nathan Lapena",
-      "MAG": "Michael Henry Aglubat",
-      "JMA": "Jelyn Malubay"
-    };
-
-    let taskPool = [
-      "PW", "ARC", "Loglogic", "TM1Top", "ISMS", "CRITICAL",
-      "PROXY", "HO", "EMEA Ticket", "TO", "Remind AX"
+    const members = ["IRO", "RDE", "FFA", "NLA", "MAG", "JMA"];
+    let tasks = ["PW", "ARC", "Loglogic", "TM1Top", "ISMS", "CRITICAL", "PROXY", "HO", "EMEA Ticket", "TO", "Remind AX"];
+    const slots = [
+      "06:30 AM - 08:30 AM",
+      "08:30 AM - 10:30 AM",
+      "10:30 AM - 12:30 PM",
+      "12:30 PM - 02:30 PM"
     ];
 
-    // --- DAILY TASKS ---
-    function renderDailyTasks() {
-      const container = document.getElementById("dailyTasksList");
+    // Always load default UI first
+    loadTasks();
+    loadMonitoring();
+
+    // Load Daily Tasks UI
+    function loadTasks(state = {}) {
+      const container = document.getElementById("dailyTasks");
       container.innerHTML = "";
-      taskPool.forEach(task => {
+      tasks.forEach(task => {
         const row = document.createElement("div");
         row.className = "flex items-center space-x-2";
-
-        const checkbox = document.createElement("input");
-        checkbox.type = "checkbox";
-        checkbox.className = "form-checkbox";
-        checkbox.dataset.task = task;
-        checkbox.onchange = () => saveDailyTask(task, checkbox.checked);
-
-        const label = document.createElement("span");
-        label.textContent = task;
-
-        const dropdown = document.createElement("select");
-        dropdown.className = "border rounded-lg p-1";
-        dropdown.dataset.task = task;
-        dropdown.innerHTML = `<option value="">-- Select Member --</option>` +
-          Object.entries(members).map(([k,v]) => `<option value="${k}">${k} (${v})</option>`).join("");
-        dropdown.onchange = () => saveDailyTask(task, checkbox.checked, dropdown.value);
-
-        row.appendChild(checkbox);
-        row.appendChild(label);
-        row.appendChild(dropdown);
+        row.innerHTML = `
+          <input type="checkbox" data-task="${task}" class="taskCheck">
+          <label class="w-32">${task}</label>
+          <select data-task="${task}" class="border p-1 rounded">
+            <option value="">-- Assign --</option>
+            ${members.map(m => `<option value="${m}">${m}</option>`).join("")}
+          </select>
+        `;
         container.appendChild(row);
       });
-    }
 
-    function saveDailyTask(task, checked, member="") {
-      update(ref(db, "dailyTasks/" + task), {
-        checked: checked,
-        member: member || ""
+      // restore state
+      Object.entries(state).forEach(([task, val]) => {
+        const cb = document.querySelector(`input[data-task="${task}"]`);
+        const sel = document.querySelector(`select[data-task="${task}"]`);
+        if (cb) cb.checked = val.checked;
+        if (sel) sel.value = val.member;
       });
-    }
 
-    function listenDailyTasks() {
-      onValue(ref(db, "dailyTasks"), snapshot => {
-        const data = snapshot.val() || {};
-        document.querySelectorAll("#dailyTasksList div").forEach(row => {
-          const cb = row.querySelector("input[type=checkbox]");
-          const dd = row.querySelector("select");
-          const t = cb.dataset.task;
-          if (data[t]) {
-            cb.checked = data[t].checked;
-            dd.value = data[t].member || "";
-          }
+      // attach listeners
+      document.querySelectorAll(".taskCheck").forEach(cb => {
+        cb.addEventListener("change", () => {
+          const task = cb.getAttribute("data-task");
+          const member = document.querySelector(`select[data-task="${task}"]`).value;
+          update(ref(db, "dailyTasks/" + task), {
+            checked: cb.checked,
+            member: member || ""
+          });
+        });
+      });
+      document.querySelectorAll("select[data-task]").forEach(sel => {
+        sel.addEventListener("change", () => {
+          const task = sel.getAttribute("data-task");
+          const checked = document.querySelector(`input[data-task="${task}"]`).checked;
+          update(ref(db, "dailyTasks/" + task), {
+            checked: checked,
+            member: sel.value || ""
+          });
         });
       });
     }
 
-    // --- WEEKLY & MONTHLY ---
-    function saveWeeklyMonthly() {
-      update(ref(db), {
-        weekly: document.getElementById("weeklyTasks").value,
-        monthly: document.getElementById("monthlyTasks").value
+    // Add new Daily Task
+    window.addTask = function() {
+      const val = document.getElementById("newTask").value.trim();
+      if (val && !tasks.includes(val)) {
+        tasks.push(val);
+        loadTasks();
+        document.getElementById("newTask").value = "";
+      }
+    }
+
+    // Monitoring UI
+    function loadMonitoring(state = {}) {
+      const container = document.getElementById("monitoringSchedule");
+      container.innerHTML = "";
+      slots.forEach((slot, i) => {
+        const row = document.createElement("div");
+        row.className = "flex items-center space-x-2";
+        row.innerHTML = `
+          <label class="w-40">${slot}</label>
+          <select data-slot="${i}" class="border p-1 rounded">
+            <option value="">-- Select Member --</option>
+            ${members.map(m => `<option value="${m}">${m}</option>`).join("")}
+          </select>
+        `;
+        container.appendChild(row);
       });
-    }
 
-    function listenWeeklyMonthly() {
-      onValue(ref(db), snapshot => {
-        const data = snapshot.val() || {};
-        document.getElementById("weeklyTasks").value = data.weekly || "";
-        document.getElementById("monthlyTasks").value = data.monthly || "";
+      // restore state
+      Object.entries(state).forEach(([i, val]) => {
+        const sel = document.querySelector(`select[data-slot="${i}"]`);
+        if (sel) sel.value = val.member || "";
       });
-    }
 
-    // --- MONITORING ---
-    function saveMonitoring(slot, member) {
-      update(ref(db, "monitoring/" + slot), { member });
-    }
-
-    function listenMonitoring() {
-      onValue(ref(db, "monitoring"), snapshot => {
-        const data = snapshot.val() || {};
-        document.querySelectorAll("#autoMonitoringSlots select, #manualMonitoringSlots select").forEach(sel => {
-          if (data[sel.dataset.slot]) {
-            sel.value = data[sel.dataset.slot].member || "";
-          }
+      // listeners
+      document.querySelectorAll("select[data-slot]").forEach(sel => {
+        sel.addEventListener("change", () => {
+          const i = sel.getAttribute("data-slot");
+          update(ref(db, "monitoring/" + i), {
+            member: sel.value || ""
+          });
         });
       });
     }
 
-    // Generate auto monitoring slots
-    function generateMonitoring() {
-      const start = document.getElementById("startTime").value;
-      const end = document.getElementById("endTime").value;
-      const count = parseInt(document.getElementById("teamCount").value);
-      const slotsDiv = document.getElementById("autoMonitoringSlots");
-      slotsDiv.innerHTML = "";
+    // Weekly/Monthly realtime save
+    document.getElementById("weeklyTasks").addEventListener("input", e => {
+      set(ref(db, "weekly"), { text: e.target.value });
+    });
+    document.getElementById("monthlyTasks").addEventListener("input", e => {
+      set(ref(db, "monthly"), { text: e.target.value });
+    });
 
-      const [sh,sm] = start.split(":"), [eh,em] = end.split(":");
-      let cur = new Date(); cur.setHours(sh,sm);
-      let endDate = new Date(); endDate.setHours(eh,em);
-      const total = (endDate - cur) / 60000;
-      const slotMins = total / count;
-
-      for (let i=0;i<count;i++) {
-        let s = new Date(cur);
-        cur.setMinutes(cur.getMinutes()+slotMins);
-        let e = new Date(cur);
-        const slotLabel = `${formatTime(s)} - ${formatTime(e)}`;
-
-        const row = document.createElement("div");
-        row.className = "flex items-center space-x-2";
-        const label = document.createElement("span");
-        label.textContent = slotLabel;
-
-        const dropdown = document.createElement("select");
-        dropdown.className = "border rounded-lg p-1";
-        dropdown.dataset.slot = slotLabel;
-        dropdown.innerHTML = `<option value="">-- Select Member --</option>` +
-          Object.entries(members).map(([k,v]) => `<option value="${k}">${k} (${v})</option>`).join("");
-        dropdown.onchange = () => saveMonitoring(slotLabel, dropdown.value);
-
-        row.appendChild(label);
-        row.appendChild(dropdown);
-        slotsDiv.appendChild(row);
-      }
-    }
-
-    function formatTime(date) {
-      let h = date.getHours(), m = date.getMinutes();
-      const ampm = h >= 12 ? "PM" : "AM";
-      h = h % 12 || 12;
-      return h + ":" + (m<10?"0":"") + m + " " + ampm;
-    }
-
-    // Manual monitoring
-    function generateManualMonitoring() {
-      const slots = document.getElementById("manualMonitoring").value.split("\n").map(s=>s.trim()).filter(s=>s);
-      const container = document.getElementById("manualMonitoringSlots");
-      container.innerHTML = "";
-      slots.forEach(slot => {
-        const row = document.createElement("div");
-        row.className = "flex items-center space-x-2";
-        const label = document.createElement("span");
-        label.textContent = slot;
-        const dropdown = document.createElement("select");
-        dropdown.className = "border rounded-lg p-1";
-        dropdown.dataset.slot = slot;
-        dropdown.innerHTML = `<option value="">-- Select Member --</option>` +
-          Object.entries(members).map(([k,v]) => `<option value="${k}">${k} (${v})</option>`).join("");
-        dropdown.onchange = () => saveMonitoring(slot, dropdown.value);
-        row.appendChild(label);
-        row.appendChild(dropdown);
-        container.appendChild(row);
+    // Generate Output
+    window.generateOutput = async function() {
+      const checkedTasks = [];
+      document.querySelectorAll(".taskCheck").forEach(cb => {
+        if (cb.checked) {
+          const task = cb.getAttribute("data-task");
+          const member = document.querySelector(`select[data-task="${task}"]`).value || "Unassigned";
+          checkedTasks.push(`${task} - ${member}`);
+        }
       });
+
+      const weekly = document.getElementById("weeklyTasks").value;
+      const monthly = document.getElementById("monthlyTasks").value;
+
+      const monitoring = [];
+      document.querySelectorAll("select[data-slot]").forEach(sel => {
+        const slot = slots[sel.getAttribute("data-slot")];
+        const member = sel.value || "Unassigned";
+        monitoring.push(`${slot} - ${member}`);
+      });
+
+      const output = `
+------ Daily Tasks ------
+${checkedTasks.join("\n") || "None selected"}
+
+------ Weekly Tasks ------
+${weekly || "None"}
+
+------ Monthly Tasks ------
+${monthly || "None"}
+
+------ Monitoring ------
+${monitoring.join("\n")}
+      `;
+
+      document.getElementById("outputBox").innerText = output;
+
+      await set(ref(db, "generatedOutput"), { text: output });
     }
 
-    // --- RESET ---
-    function resetAll() {
-      if (confirm("Reset everything for new day?")) {
-        remove(ref(db, "dailyTasks"));
-        remove(ref(db, "monitoring"));
-        update(ref(db), { weekly: "", monthly: "" });
-      }
+    // Reset All
+    window.resetAll = function() {
+      set(ref(db, "dailyTasks"), {});
+      set(ref(db, "weekly"), { text: "" });
+      set(ref(db, "monthly"), { text: "" });
+      set(ref(db, "monitoring"), {});
+      set(ref(db, "generatedOutput"), { text: "" });
     }
 
-    // --- Init ---
-    window.addEventListener("DOMContentLoaded", () => {
-      renderDailyTasks();
-      listenDailyTasks();
-      listenWeeklyMonthly();
-      listenMonitoring();
-
-      document.getElementById("weeklyTasks").addEventListener("input", saveWeeklyMonthly);
-      document.getElementById("monthlyTasks").addEventListener("input", saveWeeklyMonthly);
-      document.getElementById("resetBtn").addEventListener("click", resetAll);
+    // Realtime Listeners
+    onValue(ref(db, "dailyTasks"), snapshot => {
+      const data = snapshot.val() || {};
+      loadTasks(data);
+    });
+    onValue(ref(db, "monitoring"), snapshot => {
+      const data = snapshot.val() || {};
+      loadMonitoring(data);
+    });
+    onValue(ref(db, "weekly"), snapshot => {
+      const data = snapshot.val();
+      document.getElementById("weeklyTasks").value = data?.text || "";
+    });
+    onValue(ref(db, "monthly"), snapshot => {
+      const data = snapshot.val();
+      document.getElementById("monthlyTasks").value = data?.text || "";
+    });
+    onValue(ref(db, "generatedOutput"), snapshot => {
+      const data = snapshot.val();
+      document.getElementById("outputBox").innerText = data?.text || "";
     });
   </script>
-</head>
-<body class="bg-gray-100 min-h-screen p-6">
-  <div class="max-w-5xl mx-auto bg-white shadow-xl rounded-2xl p-6">
-    <h1 class="text-2xl font-bold text-center mb-6">IT Ops Task Generator (Realtime)</h1>
-
-    <!-- Daily Tasks -->
-    <div class="mb-6 p-4 border rounded-xl shadow-sm">
-      <h2 class="text-xl font-semibold mb-3 text-blue-700">Daily Tasks</h2>
-      <div id="dailyTasksList" class="space-y-2"></div>
-    </div>
-
-    <!-- Weekly Tasks -->
-    <div class="mb-6 p-4 border rounded-xl shadow-sm">
-      <h2 class="text-xl font-semibold mb-3 text-green-700">Weekly Tasks</h2>
-      <textarea id="weeklyTasks" rows="4" class="w-full border rounded-lg p-2"></textarea>
-    </div>
-
-    <!-- Monthly Tasks -->
-    <div class="mb-6 p-4 border rounded-xl shadow-sm">
-      <h2 class="text-xl font-semibold mb-3 text-purple-700">Monthly Tasks</h2>
-      <textarea id="monthlyTasks" rows="4" class="w-full border rounded-lg p-2"></textarea>
-    </div>
-
-    <!-- Monitoring -->
-    <div class="mb-6 p-4 border rounded-xl shadow-sm">
-      <h2 class="text-xl font-semibold mb-3 text-red-700">Monitoring</h2>
-      <label class="block mb-2">Mode:</label>
-      <select id="monitoringMode" onchange="toggleMonitoringMode()" class="border rounded-lg p-2">
-        <option value="auto">Auto Divide</option>
-        <option value="manual">Manual Input</option>
-      </select>
-
-      <div id="autoDivideSection" class="mt-4">
-        <label class="block mb-1">Start Time:</label>
-        <input type="time" id="startTime" value="06:30" class="border rounded-lg p-2 w-full">
-        <label class="block mb-1 mt-2">End Time:</label>
-        <input type="time" id="endTime" value="14:30" class="border rounded-lg p-2 w-full">
-        <label class="block mb-1 mt-2">Team Members (2-6):</label>
-        <input type="number" id="teamCount" min="2" max="6" value="4" class="border rounded-lg p-2 w-full">
-        <button onclick="generateMonitoring()" class="mt-3 px-4 py-2 bg-gray-300 rounded-lg">Generate Slots</button>
-        <div id="autoMonitoringSlots" class="mt-3 space-y-2"></div>
-      </div>
-
-      <div id="manualSection" class="mt-4 hidden">
-        <textarea id="manualMonitoring" rows="4" placeholder="Enter custom monitoring slots (e.g., 06:30-08:30)" class="w-full border rounded-lg p-2"></textarea>
-        <button onclick="generateManualMonitoring()" class="mt-3 px-4 py-2 bg-gray-300 rounded-lg">Apply Manual Slots</button>
-        <div id="manualMonitoringSlots" class="mt-3 space-y-2"></div>
-      </div>
-    </div>
-
-    <!-- Buttons -->
-    <div class="text-center mb-6 space-x-4">
-      <button id="resetBtn" class="px-6 py-3 bg-red-500 text-white rounded-xl shadow-lg hover:bg-red-600">Reset All</button>
-    </div>
-  </div>
-
-<script>
-  function toggleMonitoringMode() {
-    const mode = document.getElementById("monitoringMode").value;
-    document.getElementById("autoDivideSection").classList.toggle("hidden", mode !== "auto");
-    document.getElementById("manualSection").classList.toggle("hidden", mode !== "manual");
-  }
-</script>
 </body>
 </html>
