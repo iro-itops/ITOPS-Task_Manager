@@ -2,65 +2,12 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>IT Operations Task Generator</title>
+  <title>IT Operations Task Manager</title>
   <script src="https://cdn.tailwindcss.com"></script>
-</head>
-<body class="bg-gray-100 p-6">
-  <div class="max-w-5xl mx-auto bg-white p-6 rounded-2xl shadow-lg">
-    <h1 class="text-2xl font-bold mb-4 text-center">IT Operations Task Generator</h1>
-
-    <!-- Daily Tasks -->
-    <div class="mb-6">
-      <h2 class="text-xl font-semibold mb-2">Daily Tasks</h2>
-      <div id="dailyTasks" class="space-y-2"></div>
-      <div class="mt-2">
-        <input id="newTask" type="text" placeholder="Add new daily task" class="border p-2 rounded w-2/3">
-        <button onclick="addTask()" class="bg-green-500 text-white px-4 py-2 rounded">Add</button>
-      </div>
-    </div>
-
-    <!-- Weekly / Monthly / Patching Tasks -->
-    <div class="mb-6">
-      <h2 class="text-xl font-semibold mb-2">Weekly Tasks</h2>
-      <textarea id="weeklyTasks" class="border p-2 rounded w-full h-24"></textarea>
-    </div>
-    <div class="mb-6">
-      <h2 class="text-xl font-semibold mb-2">Monthly Tasks</h2>
-      <textarea id="monthlyTasks" class="border p-2 rounded w-full h-24"></textarea>
-    </div>
-    <div class="mb-6">
-      <h2 class="text-xl font-semibold mb-2">Patching Tasks</h2>
-      <textarea id="patchingTasks" class="border p-2 rounded w-full h-24"></textarea>
-    </div>
-
-    <!-- Monitoring -->
-    <div class="mb-6">
-      <h2 class="text-xl font-semibold mb-2">Monitoring Schedule</h2>
-      <div class="flex space-x-2 items-center mb-2">
-        <label>Number of Members:</label>
-        <input id="memberCount" type="number" min="2" max="6" value="4" class="border p-1 w-20 rounded">
-        <button onclick="autoDivideMonitoring()" class="bg-purple-500 text-white px-4 py-2 rounded">Auto Divide</button>
-      </div>
-      <div id="monitoringSchedule" class="space-y-2"></div>
-    </div>
-
-    <!-- Buttons -->
-    <div class="flex space-x-4">
-      <button onclick="generateOutput()" class="bg-blue-500 text-white px-4 py-2 rounded">Generate Output</button>
-      <button onclick="resetAll()" class="bg-red-500 text-white px-4 py-2 rounded">Reset</button>
-    </div>
-
-    <!-- Output -->
-    <div class="mt-6">
-      <h2 class="text-xl font-semibold mb-2">Generated Output</h2>
-      <pre id="outputBox" class="border p-4 rounded bg-gray-50 whitespace-pre-wrap"></pre>
-    </div>
-  </div>
-
-  <!-- Firebase -->
   <script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-    import { getDatabase, ref, set, onValue, update } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+    // ================= Firebase Setup =================
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.2/firebase-app.js";
+    import { getDatabase, ref, set, onValue, update, remove } from "https://www.gstatic.com/firebasejs/9.22.2/firebase-database.js";
 
     const firebaseConfig = {
       apiKey: "AIzaSyC56asNTd04xhDU4OlnBHS4zNxj_aiiFhM",
@@ -75,20 +22,19 @@
     const app = initializeApp(firebaseConfig);
     const db = getDatabase(app);
 
-    const members = ["IRO", "RDE", "FFA", "NLA", "MAG", "JMA"];
-    let tasks = ["PW", "ARC", "Loglogic", "TM1Top", "ISMS", "CRITICAL", "PROXY", "HO", "EMEA Ticket", "TO", "Remind AX"];
-    const slots = [
-      "06:30 AM - 08:30 AM",
-      "08:30 AM - 10:30 AM",
-      "10:30 AM - 12:30 PM",
-      "12:30 PM - 02:30 PM"
-    ];
+    // ================= Members =================
+    const members = ["IRO","RDE","FFA","NLA","MAG","JMA"];
 
-    // Always load defaults
-    loadTasks();
-    loadMonitoring();
+    // ================= Tasks =================
+    let tasks = ["PW","ARC","Loglogic","TM1Top","ISMS","CRITICAL","PROXY","HO","EMEA Ticket","TO","Remind AX"];
 
-    // Daily Tasks UI
+    // ============ Tab Switching ============
+    window.showTab = function(tab) {
+      document.querySelectorAll(".tab-content").forEach(div => div.classList.add("hidden"));
+      document.getElementById(tab).classList.remove("hidden");
+    };
+
+    // ============ Daily Tasks UI ============
     function loadTasks(state = {}) {
       const container = document.getElementById("dailyTasks");
       container.innerHTML = "";
@@ -102,6 +48,7 @@
             <option value="">-- Assign --</option>
             ${members.map(m => `<option value="${m}">${m}</option>`).join("")}
           </select>
+          <button data-remove="${task}" class="bg-red-500 text-white px-2 rounded">X</button>
         `;
         container.appendChild(row);
       });
@@ -114,7 +61,7 @@
         if (sel) sel.value = val.member;
       });
 
-      // listeners
+      // listeners for checkbox
       document.querySelectorAll(".taskCheck").forEach(cb => {
         cb.addEventListener("change", () => {
           const task = cb.getAttribute("data-task");
@@ -122,11 +69,23 @@
           update(ref(db, "dailyTasks/" + task), { checked: cb.checked, member: member || "" });
         });
       });
+
+      // listeners for select
       document.querySelectorAll("select[data-task]").forEach(sel => {
         sel.addEventListener("change", () => {
           const task = sel.getAttribute("data-task");
           const checked = document.querySelector(`input[data-task="${task}"]`).checked;
           update(ref(db, "dailyTasks/" + task), { checked: checked, member: sel.value || "" });
+        });
+      });
+
+      // listeners for remove
+      document.querySelectorAll("button[data-remove]").forEach(btn => {
+        btn.addEventListener("click", () => {
+          const task = btn.getAttribute("data-remove");
+          tasks = tasks.filter(t => t !== task);
+          remove(ref(db, "dailyTasks/" + task));
+          loadTasks(state);
         });
       });
     }
@@ -141,121 +100,143 @@
       }
     };
 
-    // Monitoring UI
-    function loadMonitoring(state = {}) {
-      const container = document.getElementById("monitoringSchedule");
+    // Realtime listener
+    onValue(ref(db, "dailyTasks"), snap => {
+      if (snap.exists()) loadTasks(snap.val());
+      else loadTasks();
+    });
+
+    // ============ Weekly / Monthly Patching ============
+    onValue(ref(db, "weeklyTasks"), snap => {
+      document.getElementById("weeklyText").value = snap.exists() ? snap.val() : "";
+    });
+    onValue(ref(db, "monthlyTasks"), snap => {
+      document.getElementById("monthlyText").value = snap.exists() ? snap.val() : "";
+    });
+
+    window.saveText = function(type) {
+      const val = document.getElementById(type+"Text").value;
+      set(ref(db, type+"Tasks"), val);
+    };
+
+    // ============ Monitoring Schedule ============
+    window.generateMonitoring = function() {
+      const memberCount = members.length;
+      const shifts = [
+        "06:30 AM - 08:30 AM",
+        "08:30 AM - 10:30 AM",
+        "10:30 AM - 12:30 PM",
+        "12:30 PM - 02:30 PM"
+      ];
+
+      let schedule = {};
+      shifts.forEach((slot, i) => {
+        schedule[slot] = members[i % memberCount];
+      });
+
+      set(ref(db, "monitoring"), schedule);
+    };
+
+    onValue(ref(db, "monitoring"), snap => {
+      const container = document.getElementById("monitoringOutput");
       container.innerHTML = "";
-      slots.forEach((slot, i) => {
-        const row = document.createElement("div");
-        row.className = "flex items-center space-x-2";
-        row.innerHTML = `
-          <label class="w-40">${slot}</label>
-          <select data-slot="${i}" class="border p-1 rounded">
-            <option value="">-- Select Member --</option>
-            ${members.map(m => `<option value="${m}">${m}</option>`).join("")}
-          </select>
-        `;
-        container.appendChild(row);
-      });
-
-      // restore state
-      Object.entries(state).forEach(([i, val]) => {
-        const sel = document.querySelector(`select[data-slot="${i}"]`);
-        if (sel) sel.value = val.member || "";
-      });
-
-      // listeners
-      document.querySelectorAll("select[data-slot]").forEach(sel => {
-        sel.addEventListener("change", () => {
-          const i = sel.getAttribute("data-slot");
-          update(ref(db, "monitoring/" + i), { member: sel.value || "" });
+      if (snap.exists()) {
+        Object.entries(snap.val()).forEach(([slot, member]) => {
+          const div = document.createElement("div");
+          div.textContent = `${slot} - ${member}`;
+          container.appendChild(div);
         });
-      });
-    }
-
-    // Auto Divide Monitoring
-    window.autoDivideMonitoring = function() {
-      const count = parseInt(document.getElementById("memberCount").value) || 4;
-      const chosen = members.slice(0, count);
-      const assignment = {};
-      slots.forEach((slot, i) => {
-        const member = chosen[i % count];
-        assignment[i] = { member };
-      });
-      set(ref(db, "monitoring"), assignment);
-    };
-
-    // Weekly/Monthly/Patching realtime save
-    document.getElementById("weeklyTasks").addEventListener("input", e => {
-      set(ref(db, "weekly"), { text: e.target.value });
-    });
-    document.getElementById("monthlyTasks").addEventListener("input", e => {
-      set(ref(db, "monthly"), { text: e.target.value });
-    });
-    document.getElementById("patchingTasks").addEventListener("input", e => {
-      set(ref(db, "patching"), { text: e.target.value });
+      }
     });
 
-    // Generate Output
-    window.generateOutput = async function() {
-      const checkedTasks = [];
-      document.querySelectorAll(".taskCheck").forEach(cb => {
-        if (cb.checked) {
-          const task = cb.getAttribute("data-task");
-          const member = document.querySelector(`select[data-task="${task}"]`).value || "Unassigned";
-          checkedTasks.push(`${task} - ${member}`);
+    // ============ Generate Output ============
+    window.generateOutput = function() {
+      let output = "------ Daily Tasks ------\n";
+      onValue(ref(db, "dailyTasks"), snap => {
+        if (snap.exists()) {
+          Object.entries(snap.val()).forEach(([task, val]) => {
+            if (val.checked) output += `${task} - ${val.member}\n`;
+          });
         }
-      });
+      }, {onlyOnce:true});
 
-      const weekly = document.getElementById("weeklyTasks").value;
-      const monthly = document.getElementById("monthlyTasks").value;
-      const patching = document.getElementById("patchingTasks").value;
+      output += "\n------ Weekly Tasks ------\n";
+      output += document.getElementById("weeklyText").value + "\n";
 
-      const monitoring = [];
-      document.querySelectorAll("select[data-slot]").forEach(sel => {
-        const slot = slots[sel.getAttribute("data-slot")];
-        const member = sel.value || "Unassigned";
-        monitoring.push(`${slot} - ${member}`);
-      });
+      output += "\n------ Monthly Tasks ------\n";
+      output += document.getElementById("monthlyText").value + "\n";
 
-      const output = `
------- Daily Tasks ------
-${checkedTasks.join("\n") || "None selected"}
+      output += "\n------ Monitoring Schedule ------\n";
+      const monitor = document.getElementById("monitoringOutput").innerText;
+      output += monitor;
 
------- Weekly Tasks ------
-${weekly || "None"}
-
------- Monthly Tasks ------
-${monthly || "None"}
-
------- Patching Tasks ------
-${patching || "None"}
-
------- Monitoring ------
-${monitoring.join("\n")}
-      `;
-
-      document.getElementById("outputBox").innerText = output;
-      await set(ref(db, "generatedOutput"), { text: output });
+      document.getElementById("finalOutput").value = output;
+      set(ref(db, "finalOutput"), output);
     };
 
-    // Reset All
+    onValue(ref(db, "finalOutput"), snap => {
+      if (snap.exists()) document.getElementById("finalOutput").value = snap.val();
+    });
+
+    // ============ Reset ============
     window.resetAll = function() {
-      set(ref(db, "dailyTasks"), {});
-      set(ref(db, "weekly"), { text: "" });
-      set(ref(db, "monthly"), { text: "" });
-      set(ref(db, "patching"), { text: "" });
-      set(ref(db, "monitoring"), {});
-      set(ref(db, "generatedOutput"), { text: "" });
+      remove(ref(db));
+      document.getElementById("weeklyText").value = "";
+      document.getElementById("monthlyText").value = "";
+      document.getElementById("monitoringOutput").innerHTML = "";
+      document.getElementById("finalOutput").value = "";
+      loadTasks();
     };
 
-    // Realtime Listeners
-    onValue(ref(db, "dailyTasks"), snapshot => loadTasks(snapshot.val() || {}));
-    onValue(ref(db, "monitoring"), snapshot => loadMonitoring(snapshot.val() || {}));
-    onValue(ref(db, "weekly"), snapshot => document.getElementById("weeklyTasks").value = snapshot.val()?.text || "");
-    onValue(ref(db, "monthly"), snapshot => document.getElementById("monthlyTasks").value = snapshot.val()?.text || "");
-    onValue(ref(db, "patching"), snapshot => document.getElementById("patchingTasks").value = snapshot.val()?.text || "");
-    onValue(ref(db, "generatedOutput"), snapshot => document.getElementById("outputBox").innerText = snapshot.val()?.text || "");
   </script>
+</head>
+<body class="p-6 font-sans bg-gray-50">
+  <h1 class="text-2xl font-bold mb-4">IT Operations Task Manager</h1>
+
+  <!-- Tabs -->
+  <div class="flex space-x-2 border-b mb-4">
+    <button onclick="showTab('daily')" class="px-4 py-2 bg-blue-500 text-white rounded-t">Daily</button>
+    <button onclick="showTab('weekly')" class="px-4 py-2 bg-gray-200 rounded-t">Weekly</button>
+    <button onclick="showTab('monthly')" class="px-4 py-2 bg-gray-200 rounded-t">Monthly</button>
+    <button onclick="showTab('monitoring')" class="px-4 py-2 bg-gray-200 rounded-t">Monitoring</button>
+    <button onclick="showTab('output')" class="px-4 py-2 bg-gray-200 rounded-t">Output</button>
+  </div>
+
+  <!-- Daily -->
+  <div id="daily" class="tab-content">
+    <h2 class="text-lg font-semibold mb-2">Daily Tasks</h2>
+    <div id="dailyTasks" class="space-y-2"></div>
+    <div class="mt-3 flex">
+      <input id="newTask" placeholder="Add new task" class="border flex-1 p-1 rounded">
+      <button onclick="addTask()" class="ml-2 bg-green-500 text-white px-3 rounded">Add</button>
+    </div>
+  </div>
+
+  <!-- Weekly -->
+  <div id="weekly" class="tab-content hidden">
+    <h2 class="text-lg font-semibold mb-2">Weekly Patching Tasks</h2>
+    <textarea id="weeklyText" class="w-full border p-2 h-40" oninput="saveText('weekly')"></textarea>
+  </div>
+
+  <!-- Monthly -->
+  <div id="monthly" class="tab-content hidden">
+    <h2 class="text-lg font-semibold mb-2">Monthly Patching Tasks</h2>
+    <textarea id="monthlyText" class="w-full border p-2 h-40" oninput="saveText('monthly')"></textarea>
+  </div>
+
+  <!-- Monitoring -->
+  <div id="monitoring" class="tab-content hidden">
+    <h2 class="text-lg font-semibold mb-2">Monitoring Schedule</h2>
+    <button onclick="generateMonitoring()" class="bg-blue-500 text-white px-4 py-2 rounded">Generate Monitoring Schedule</button>
+    <div id="monitoringOutput" class="mt-3 space-y-1"></div>
+  </div>
+
+  <!-- Output -->
+  <div id="output" class="tab-content hidden">
+    <h2 class="text-lg font-semibold mb-2">Generated Output</h2>
+    <button onclick="generateOutput()" class="bg-blue-500 text-white px-4 py-2 rounded mb-2">Generate Output</button>
+    <button onclick="resetAll()" class="bg-red-500 text-white px-4 py-2 rounded mb-2">Reset</button>
+    <textarea id="finalOutput" class="w-full border p-2 h-60"></textarea>
+  </div>
 </body>
 </html>
