@@ -19,7 +19,7 @@
       </div>
     </div>
 
-    <!-- Weekly / Monthly Tasks -->
+    <!-- Weekly / Monthly / Patching Tasks -->
     <div class="mb-6">
       <h2 class="text-xl font-semibold mb-2">Weekly Tasks</h2>
       <textarea id="weeklyTasks" class="border p-2 rounded w-full h-24"></textarea>
@@ -28,10 +28,19 @@
       <h2 class="text-xl font-semibold mb-2">Monthly Tasks</h2>
       <textarea id="monthlyTasks" class="border p-2 rounded w-full h-24"></textarea>
     </div>
+    <div class="mb-6">
+      <h2 class="text-xl font-semibold mb-2">Patching Tasks</h2>
+      <textarea id="patchingTasks" class="border p-2 rounded w-full h-24"></textarea>
+    </div>
 
     <!-- Monitoring -->
     <div class="mb-6">
       <h2 class="text-xl font-semibold mb-2">Monitoring Schedule</h2>
+      <div class="flex space-x-2 items-center mb-2">
+        <label>Number of Members:</label>
+        <input id="memberCount" type="number" min="2" max="6" value="4" class="border p-1 w-20 rounded">
+        <button onclick="autoDivideMonitoring()" class="bg-purple-500 text-white px-4 py-2 rounded">Auto Divide</button>
+      </div>
       <div id="monitoringSchedule" class="space-y-2"></div>
     </div>
 
@@ -75,11 +84,11 @@
       "12:30 PM - 02:30 PM"
     ];
 
-    // Always load default UI first
+    // Always load defaults
     loadTasks();
     loadMonitoring();
 
-    // Load Daily Tasks UI
+    // Daily Tasks UI
     function loadTasks(state = {}) {
       const container = document.getElementById("dailyTasks");
       container.innerHTML = "";
@@ -105,25 +114,19 @@
         if (sel) sel.value = val.member;
       });
 
-      // attach listeners
+      // listeners
       document.querySelectorAll(".taskCheck").forEach(cb => {
         cb.addEventListener("change", () => {
           const task = cb.getAttribute("data-task");
           const member = document.querySelector(`select[data-task="${task}"]`).value;
-          update(ref(db, "dailyTasks/" + task), {
-            checked: cb.checked,
-            member: member || ""
-          });
+          update(ref(db, "dailyTasks/" + task), { checked: cb.checked, member: member || "" });
         });
       });
       document.querySelectorAll("select[data-task]").forEach(sel => {
         sel.addEventListener("change", () => {
           const task = sel.getAttribute("data-task");
           const checked = document.querySelector(`input[data-task="${task}"]`).checked;
-          update(ref(db, "dailyTasks/" + task), {
-            checked: checked,
-            member: sel.value || ""
-          });
+          update(ref(db, "dailyTasks/" + task), { checked: checked, member: sel.value || "" });
         });
       });
     }
@@ -136,7 +139,7 @@
         loadTasks();
         document.getElementById("newTask").value = "";
       }
-    }
+    };
 
     // Monitoring UI
     function loadMonitoring(state = {}) {
@@ -165,19 +168,32 @@
       document.querySelectorAll("select[data-slot]").forEach(sel => {
         sel.addEventListener("change", () => {
           const i = sel.getAttribute("data-slot");
-          update(ref(db, "monitoring/" + i), {
-            member: sel.value || ""
-          });
+          update(ref(db, "monitoring/" + i), { member: sel.value || "" });
         });
       });
     }
 
-    // Weekly/Monthly realtime save
+    // Auto Divide Monitoring
+    window.autoDivideMonitoring = function() {
+      const count = parseInt(document.getElementById("memberCount").value) || 4;
+      const chosen = members.slice(0, count);
+      const assignment = {};
+      slots.forEach((slot, i) => {
+        const member = chosen[i % count];
+        assignment[i] = { member };
+      });
+      set(ref(db, "monitoring"), assignment);
+    };
+
+    // Weekly/Monthly/Patching realtime save
     document.getElementById("weeklyTasks").addEventListener("input", e => {
       set(ref(db, "weekly"), { text: e.target.value });
     });
     document.getElementById("monthlyTasks").addEventListener("input", e => {
       set(ref(db, "monthly"), { text: e.target.value });
+    });
+    document.getElementById("patchingTasks").addEventListener("input", e => {
+      set(ref(db, "patching"), { text: e.target.value });
     });
 
     // Generate Output
@@ -193,6 +209,7 @@
 
       const weekly = document.getElementById("weeklyTasks").value;
       const monthly = document.getElementById("monthlyTasks").value;
+      const patching = document.getElementById("patchingTasks").value;
 
       const monitoring = [];
       document.querySelectorAll("select[data-slot]").forEach(sel => {
@@ -211,45 +228,34 @@ ${weekly || "None"}
 ------ Monthly Tasks ------
 ${monthly || "None"}
 
+------ Patching Tasks ------
+${patching || "None"}
+
 ------ Monitoring ------
 ${monitoring.join("\n")}
       `;
 
       document.getElementById("outputBox").innerText = output;
-
       await set(ref(db, "generatedOutput"), { text: output });
-    }
+    };
 
     // Reset All
     window.resetAll = function() {
       set(ref(db, "dailyTasks"), {});
       set(ref(db, "weekly"), { text: "" });
       set(ref(db, "monthly"), { text: "" });
+      set(ref(db, "patching"), { text: "" });
       set(ref(db, "monitoring"), {});
       set(ref(db, "generatedOutput"), { text: "" });
-    }
+    };
 
     // Realtime Listeners
-    onValue(ref(db, "dailyTasks"), snapshot => {
-      const data = snapshot.val() || {};
-      loadTasks(data);
-    });
-    onValue(ref(db, "monitoring"), snapshot => {
-      const data = snapshot.val() || {};
-      loadMonitoring(data);
-    });
-    onValue(ref(db, "weekly"), snapshot => {
-      const data = snapshot.val();
-      document.getElementById("weeklyTasks").value = data?.text || "";
-    });
-    onValue(ref(db, "monthly"), snapshot => {
-      const data = snapshot.val();
-      document.getElementById("monthlyTasks").value = data?.text || "";
-    });
-    onValue(ref(db, "generatedOutput"), snapshot => {
-      const data = snapshot.val();
-      document.getElementById("outputBox").innerText = data?.text || "";
-    });
+    onValue(ref(db, "dailyTasks"), snapshot => loadTasks(snapshot.val() || {}));
+    onValue(ref(db, "monitoring"), snapshot => loadMonitoring(snapshot.val() || {}));
+    onValue(ref(db, "weekly"), snapshot => document.getElementById("weeklyTasks").value = snapshot.val()?.text || "");
+    onValue(ref(db, "monthly"), snapshot => document.getElementById("monthlyTasks").value = snapshot.val()?.text || "");
+    onValue(ref(db, "patching"), snapshot => document.getElementById("patchingTasks").value = snapshot.val()?.text || "");
+    onValue(ref(db, "generatedOutput"), snapshot => document.getElementById("outputBox").innerText = snapshot.val()?.text || "");
   </script>
 </body>
 </html>
