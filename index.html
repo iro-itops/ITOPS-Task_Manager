@@ -25,16 +25,17 @@
     // ================= Members =================
     const members = ["IRO","RDE","FFA","NLA","MAG","JMA"];
 
-    // ================= Tasks =================
-    let tasks = ["PW","ARC","Loglogic","TM1Top","ISMS","CRITICAL","PROXY","HO","EMEA Ticket","TO","Remind AX"];
+    // ================= Default Tasks =================
+    let defaultTasks = ["PW","ARC","Loglogic","TM1Top","ISMS","CRITICAL","PROXY","HO","EMEA Ticket","TO","Remind AX"];
+    let tasks = [...defaultTasks];
 
-    // ============ Tab Switching ============
+    // ================= Tab Navigation =================
     window.showTab = function(tab) {
       document.querySelectorAll(".tab-content").forEach(div => div.classList.add("hidden"));
       document.getElementById(tab).classList.remove("hidden");
     };
 
-    // ============ Daily Tasks UI ============
+    // ================= Daily Tasks =================
     function loadTasks(state = {}) {
       const container = document.getElementById("dailyTasks");
       container.innerHTML = "";
@@ -61,7 +62,7 @@
         if (sel) sel.value = val.member;
       });
 
-      // listeners for checkbox
+      // listeners
       document.querySelectorAll(".taskCheck").forEach(cb => {
         cb.addEventListener("change", () => {
           const task = cb.getAttribute("data-task");
@@ -70,7 +71,6 @@
         });
       });
 
-      // listeners for select
       document.querySelectorAll("select[data-task]").forEach(sel => {
         sel.addEventListener("change", () => {
           const task = sel.getAttribute("data-task");
@@ -79,7 +79,6 @@
         });
       });
 
-      // listeners for remove
       document.querySelectorAll("button[data-remove]").forEach(btn => {
         btn.addEventListener("click", () => {
           const task = btn.getAttribute("data-remove");
@@ -100,26 +99,28 @@
       }
     };
 
-    // Realtime listener
+    // Realtime listener for Daily Tasks
     onValue(ref(db, "dailyTasks"), snap => {
       if (snap.exists()) loadTasks(snap.val());
-      else loadTasks();
+      else loadTasks(); // show defaults if DB empty
     });
 
-    // ============ Weekly / Monthly Patching ============
-    onValue(ref(db, "weeklyTasks"), snap => {
-      document.getElementById("weeklyText").value = snap.exists() ? snap.val() : "";
-    });
-    onValue(ref(db, "monthlyTasks"), snap => {
-      document.getElementById("monthlyText").value = snap.exists() ? snap.val() : "";
-    });
+    // ================= Weekly / Monthly / Patching =================
+    function setupTextSync(id) {
+      const refPath = ref(db, id);
+      onValue(refPath, snap => {
+        document.getElementById(id + "Text").value = snap.exists() ? snap.val() : "";
+      });
+      window["save" + id] = function() {
+        set(refPath, document.getElementById(id + "Text").value);
+      };
+    }
 
-    window.saveText = function(type) {
-      const val = document.getElementById(type+"Text").value;
-      set(ref(db, type+"Tasks"), val);
-    };
+    setupTextSync("weekly");
+    setupTextSync("monthly");
+    setupTextSync("patching");
 
-    // ============ Monitoring Schedule ============
+    // ================= Monitoring Schedule =================
     window.generateMonitoring = function() {
       const memberCount = members.length;
       const shifts = [
@@ -149,26 +150,32 @@
       }
     });
 
-    // ============ Generate Output ============
+    // ================= Generate Output =================
     window.generateOutput = function() {
-      let output = "------ Daily Tasks ------\n";
+      let output = "------ DAILY TASKS ------\n";
       onValue(ref(db, "dailyTasks"), snap => {
         if (snap.exists()) {
           Object.entries(snap.val()).forEach(([task, val]) => {
             if (val.checked) output += `${task} - ${val.member}\n`;
           });
         }
-      }, {onlyOnce:true});
+      }, { onlyOnce: true });
 
-      output += "\n------ Weekly Tasks ------\n";
+      output += "\n------ WEEKLY TASKS ------\n";
       output += document.getElementById("weeklyText").value + "\n";
 
-      output += "\n------ Monthly Tasks ------\n";
+      output += "\n------ MONTHLY TASKS ------\n";
       output += document.getElementById("monthlyText").value + "\n";
 
-      output += "\n------ Monitoring Schedule ------\n";
+      output += "\n------ PATCHING TASKS ------\n";
+      output += document.getElementById("patchingText").value + "\n";
+
+      output += "\n------ MONITORING SCHEDULE ------\n";
       const monitor = document.getElementById("monitoringOutput").innerText;
       output += monitor;
+
+      const timestamp = new Date().toLocaleString();
+      output += `\n\nGenerated on: ${timestamp}`;
 
       document.getElementById("finalOutput").value = output;
       set(ref(db, "finalOutput"), output);
@@ -178,13 +185,15 @@
       if (snap.exists()) document.getElementById("finalOutput").value = snap.val();
     });
 
-    // ============ Reset ============
+    // ================= Reset Everything =================
     window.resetAll = function() {
       remove(ref(db));
       document.getElementById("weeklyText").value = "";
       document.getElementById("monthlyText").value = "";
+      document.getElementById("patchingText").value = "";
       document.getElementById("monitoringOutput").innerHTML = "";
       document.getElementById("finalOutput").value = "";
+      tasks = [...defaultTasks];
       loadTasks();
     };
 
@@ -198,6 +207,7 @@
     <button onclick="showTab('daily')" class="px-4 py-2 bg-blue-500 text-white rounded-t">Daily</button>
     <button onclick="showTab('weekly')" class="px-4 py-2 bg-gray-200 rounded-t">Weekly</button>
     <button onclick="showTab('monthly')" class="px-4 py-2 bg-gray-200 rounded-t">Monthly</button>
+    <button onclick="showTab('patching')" class="px-4 py-2 bg-gray-200 rounded-t">Patching</button>
     <button onclick="showTab('monitoring')" class="px-4 py-2 bg-gray-200 rounded-t">Monitoring</button>
     <button onclick="showTab('output')" class="px-4 py-2 bg-gray-200 rounded-t">Output</button>
   </div>
@@ -214,14 +224,20 @@
 
   <!-- Weekly -->
   <div id="weekly" class="tab-content hidden">
-    <h2 class="text-lg font-semibold mb-2">Weekly Patching Tasks</h2>
-    <textarea id="weeklyText" class="w-full border p-2 h-40" oninput="saveText('weekly')"></textarea>
+    <h2 class="text-lg font-semibold mb-2">Weekly Tasks</h2>
+    <textarea id="weeklyText" class="w-full border p-2 h-40" oninput="saveweekly()"></textarea>
   </div>
 
   <!-- Monthly -->
   <div id="monthly" class="tab-content hidden">
-    <h2 class="text-lg font-semibold mb-2">Monthly Patching Tasks</h2>
-    <textarea id="monthlyText" class="w-full border p-2 h-40" oninput="saveText('monthly')"></textarea>
+    <h2 class="text-lg font-semibold mb-2">Monthly Tasks</h2>
+    <textarea id="monthlyText" class="w-full border p-2 h-40" oninput="savemonthly()"></textarea>
+  </div>
+
+  <!-- Patching -->
+  <div id="patching" class="tab-content hidden">
+    <h2 class="text-lg font-semibold mb-2">Patching Tasks</h2>
+    <textarea id="patchingText" class="w-full border p-2 h-40" oninput="savepatching()"></textarea>
   </div>
 
   <!-- Monitoring -->
