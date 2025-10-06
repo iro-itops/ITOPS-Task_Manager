@@ -171,6 +171,31 @@
     function addClass(elm, c){ if(elm) elm.classList.add(c); }
     function removeClass(elm, c){ if(elm) elm.classList.remove(c); }
 
+    // Tab switching function - MUST BE GLOBAL
+    window.showTab = function(tabName) {
+      console.log('Switching to tab:', tabName);
+      // Hide all tab contents
+      document.querySelectorAll('.tab-content').forEach(tab => {
+        tab.classList.add('hidden');
+      });
+      
+      // Remove active state from all tabs
+      document.querySelectorAll('#tabs button').forEach(button => {
+        button.classList.remove('tab-active');
+        button.classList.add('tab-inactive');
+      });
+      
+      // Show selected tab content and activate tab button
+      const tabContent = document.getElementById(tabName);
+      const tabButton = document.getElementById(`tab-${tabName}`);
+      
+      if (tabContent) tabContent.classList.remove('hidden');
+      if (tabButton) {
+        tabButton.classList.remove('tab-inactive');
+        tabButton.classList.add('tab-active');
+      }
+    }
+
     // anonymous client id for locks (session)
     let CLIENT_ID = sessionStorage.getItem('itops_client_id');
     if (!CLIENT_ID) {
@@ -180,24 +205,33 @@
 
     // ---------- ensure defaults (seed once if DB empty) ----------
     async function ensureDefaults() {
+      console.log('Ensuring defaults...');
+      
       // teamMembers
       const tmSnap = await get(ref(db,'teamMembers'));
-      if (!tmSnap.exists()) await set(ref(db,'teamMembers'), DEFAULT_MEMBERS);
+      if (!tmSnap.exists()) {
+        console.log('Setting default team members');
+        await set(ref(db,'teamMembers'), DEFAULT_MEMBERS);
+      }
 
       // daily tasks per shift
       const dailySnap = await get(ref(db,'dailyTasks'));
       if (!dailySnap.exists()) {
+        console.log('Setting default daily tasks');
         const payload = {};
         Object.entries(DEFAULT_DAILY).forEach(([shift, arr])=>{
           payload[shift] = {};
           arr.forEach(t => payload[shift][t] = { checked:false, member:"" });
         });
         await set(ref(db,'dailyTasks'), payload);
+      } else {
+        console.log('Daily tasks already exist:', dailySnap.val());
       }
 
       // monitoringSchedules skeleton
       const msSnap = await get(ref(db,'monitoringSchedules'));
       if (!msSnap.exists()) {
+        console.log('Setting default monitoring schedules');
         const base = {
           shift1: { start:"06:30", end:"14:30", members:{}, slots:{} },
           shift2: { start:"14:30", end:"22:30", members:{}, slots:{} },
@@ -210,6 +244,8 @@
       if (!(await get(ref(db,'monthly'))).exists()) await set(ref(db,'monthly'), "");
       if (!(await get(ref(db,'patching'))).exists()) await set(ref(db,'patching'), "");
       if (!(await get(ref(db,'finalOutput'))).exists()) await set(ref(db,'finalOutput'), "");
+      
+      console.log('Defaults ensured');
     }
 
     // ---------- teamMembers watcher (renders member checkboxes for each shift) ----------
@@ -218,14 +254,16 @@
       window._membersMap = map;
       ['shift1','shift2','shift3'].forEach(shiftId => {
         const container = el(shiftId + '-members');
-        container.innerHTML = '';
-        Object.entries(map).forEach(([k,v]) => {
-          const id = `${shiftId}-m-${k}`;
-          const wrapper = document.createElement('div');
-          wrapper.className = 'flex items-center gap-2';
-          wrapper.innerHTML = `<input type="checkbox" id="${id}" data-key="${k}" /> <label for="${id}" class="text-sm">${k} — ${v}</label>`;
-          container.appendChild(wrapper);
-        });
+        if (container) {
+          container.innerHTML = '';
+          Object.entries(map).forEach(([k,v]) => {
+            const id = `${shiftId}-m-${k}`;
+            const wrapper = document.createElement('div');
+            wrapper.className = 'flex items-center gap-2';
+            wrapper.innerHTML = `<input type="checkbox" id="${id}" data-key="${k}" /> <label for="${id}" class="text-sm">${k} — ${v}</label>`;
+            container.appendChild(wrapper);
+          });
+        }
       });
       // update any slot selects already on page
       els('select[data-slot]').forEach(sel => {
@@ -247,6 +285,7 @@
     // ---------- daily tasks: render per shift and hooks ----------
     onValue(ref(db,'dailyTasks'), snap => {
       const data = snap.exists() ? snap.val() : {};
+      console.log('Daily tasks data received:', data);
       const shift = el('dailyShiftSelect').value || 'shift1';
       renderDailyShift(shift, data[shift] || {});
     });
@@ -254,28 +293,56 @@
     el('dailyShiftSelect').addEventListener('change', async () => {
       const dataSnap = (await get(ref(db,'dailyTasks'))).val() || {};
       const shift = el('dailyShiftSelect').value;
+      console.log('Shift changed to:', shift, 'Data:', dataSnap[shift]);
       renderDailyShift(shift, dataSnap[shift] || {});
     });
 
     function renderDailyShift(shiftId, items) {
       const container = el('dailyTasks');
+      if (!container) return;
+      
       container.innerHTML = '';
-      const keys = items && Object.keys(items).length ? Object.keys(items) : (DEFAULT_DAILY[shiftId] || []);
-      keys.forEach(task => {
-        const st = items[task] || { checked:false, member:"" };
+      
+      console.log('Rendering shift:', shiftId, 'Items:', items);
+      
+      // Handle both object and array formats for backward compatibility
+      let tasks = [];
+      if (items && typeof items === 'object') {
+        if (Array.isArray(items)) {
+          // Old array format
+          tasks = items;
+        } else {
+          // New object format - extract task names from keys
+          tasks = Object.keys(items);
+        }
+      } else {
+        // Fallback to defaults
+        tasks = DEFAULT_DAILY[shiftId] || [];
+        console.log('Using default tasks for shift:', shiftId, tasks);
+      }
+      
+      if (tasks.length === 0) {
+        container.innerHTML = '<div class="text-gray-500">No tasks found. Add tasks using the input below.</div>';
+        return;
+      }
+      
+      tasks.forEach(task => {
+        const taskData = (items && items[task]) || { checked: false, member: "" };
         const row = document.createElement('div');
-        row.className = 'flex items-center gap-3';
+        row.className = 'flex items-center gap-3 py-2 border-b';
         row.innerHTML = `
-          <input type="checkbox" data-task="${task}" ${st.checked ? 'checked' : ''} />
+          <input type="checkbox" data-task="${task}" ${taskData.checked ? 'checked' : ''} class="w-4 h-4" />
           <div class="flex-1"><div class="font-medium">${task}</div></div>
-          <select data-task="${task}" class="border rounded p-1"></select>
-          <button data-remove="${task}" class="ml-2 bg-red-500 text-white px-2 py-1 rounded">Remove</button>
+          <select data-task="${task}" class="border rounded p-1 w-40"></select>
+          <button data-remove="${task}" class="ml-2 bg-red-500 text-white px-2 py-1 rounded text-sm">Remove</button>
         `;
         container.appendChild(row);
+        
         const sel = row.querySelector('select[data-task]');
         const memObj = window._membersMap || DEFAULT_MEMBERS;
-        sel.innerHTML = `<option value="">-- Assign --</option>` + Object.entries(memObj).map(([k,v])=>`<option value="${k}">${k} (${v})</option>`).join('');
-        sel.value = st.member || '';
+        sel.innerHTML = `<option value="">-- Assign --</option>` + 
+          Object.entries(memObj).map(([k,v]) => `<option value="${k}">${k} (${v})</option>`).join('');
+        sel.value = taskData.member || '';
       });
 
       // listeners
@@ -344,20 +411,39 @@
 
       // show slots
       const slotsContainer = el(shiftId + '-slots');
+      if (!slotsContainer) return;
+      
       slotsContainer.innerHTML = '';
       const slots = shiftData.slots || {};
-      if (!Object.keys(slots).length) {
+      
+      // Sort slots by time for display
+      const sortedSlots = Object.entries(slots).sort((a, b) => {
+        // Extract start time from "HH:MM AM/PM - HH:MM AM/PM" format
+        const getStartTime = (timeStr) => {
+          const startPart = timeStr.split(' - ')[0];
+          const [time, modifier] = startPart.split(' ');
+          const [hours, minutes] = time.split(':').map(Number);
+          let totalMinutes = hours * 60 + minutes;
+          if (modifier === 'PM' && hours !== 12) totalMinutes += 12 * 60;
+          if (modifier === 'AM' && hours === 12) totalMinutes -= 12 * 60;
+          return totalMinutes;
+        };
+        
+        return getStartTime(a[0]) - getStartTime(b[0]);
+      });
+      
+      if (sortedSlots.length === 0) {
         slotsContainer.innerHTML = '<div class="text-sm text-gray-500">No slots yet. Click Generate to auto-divide.</div>';
         return;
       }
 
-      // render slot rows
-      Object.entries(slots).forEach(([slotTime, sData]) => {
+      // render slot rows in sorted order
+      sortedSlots.forEach(([slotTime, sData]) => {
         const row = document.createElement('div');
-        row.className = 'flex gap-3 items-center';
+        row.className = 'flex gap-3 items-center py-1';
         row.innerHTML = `
           <div class="w-56 text-sm">${slotTime}</div>
-          <select data-slot="${shiftId}|${slotTime}" class="border rounded p-1"></select>
+          <select data-slot="${shiftId}|${slotTime}" class="border rounded p-1 w-40"></select>
           <div class="text-xs text-gray-500 ml-2" data-lockinfo></div>
         `;
         slotsContainer.appendChild(row);
@@ -408,8 +494,6 @@
           await set(ref(db, `monitoringSchedules/${shiftId}/slots/${slotTime}/lockTs`), Date.now());
           // now set member
           await set(ref(db, `monitoringSchedules/${shiftId}/slots/${slotTime}`), { member: sel.value || "", lockedBy: CLIENT_ID, lockTs: Date.now() });
-          // we leave the lock in place; it will expire automatically by timestamp; optionally remove lock entry now:
-          // (we'll keep it for a short period to prevent immediate overwrite)
         };
       });
     }
@@ -419,7 +503,7 @@
     onValue(ref(db,'monitoringSchedules/shift2'), snap => renderShift('shift2'));
     onValue(ref(db,'monitoringSchedules/shift3'), snap => renderShift('shift3'));
 
-    // generate shift slots (auto-divide)
+    // generate shift slots (auto-divide) with proper sorting
     function toDate(hm){ const [hh,mm]=hm.split(':').map(Number); const d=new Date(); d.setHours(hh,mm,0,0); return d; }
     function fmt(d){ let h=d.getHours(), m=d.getMinutes(), am=h>=12?'PM':'AM'; h=h%12||12; return `${String(h)}:${String(m).padStart(2,'0')} ${am}`; }
 
@@ -432,18 +516,34 @@
       if (end <= start) end = new Date(end.getTime() + 24*60*60*1000);
       const totalMin = (end - start)/60000; const parts = checked.length; const slotMin = totalMin/parts;
       let cur = new Date(start);
-      const slots = {};
+      
+      // Create array to store slots temporarily for sorting
+      const slotArray = [];
+      
       for (let i=0;i<parts;i++){
         const sT = new Date(cur);
         cur.setMinutes(cur.getMinutes()+slotMin);
         const eT = new Date(cur);
         const label = `${fmt(sT)} - ${fmt(eT)}`;
-        slots[label] = { member: checked[i] || "", lockedBy: "", lockTs: 0 };
+        slotArray.push({
+          label,
+          member: checked[i] || "",
+          startTime: sT.getTime() // Store timestamp for sorting
+        });
       }
+      
+      // Sort slots by start time
+      slotArray.sort((a, b) => a.startTime - b.startTime);
+      
+      // Convert to object for Firebase
+      const slots = {};
+      slotArray.forEach(slot => {
+        slots[slot.label] = { member: slot.member, lockedBy: "", lockTs: 0 };
+      });
+      
       // persist members and slots
       const membersObj = {}; checked.forEach(k=>membersObj[k]=true);
       await set(ref(db, `monitoringSchedules/${shiftId}`), { start: s, end: e, members: membersObj, slots });
-      // re-render via onValue
     };
 
     window.clearShift = async function(shiftId) {
@@ -501,19 +601,15 @@
 
     // ---------- init ----------
     (async function init(){
+      console.log('Initializing app...');
       await ensureDefaults();
       showTab('daily');
       // initial renders
       renderShift('shift1');
       renderShift('shift2');
       renderShift('shift3');
+      console.log('App initialized');
     })();
-
-    // expose some functions (helpful for debugging)
-    window.generateShift = window.generateShift;
-    window.clearShift = window.clearShift;
-    window.addTask = async () => { el('btnAddTask').click(); };
-    window.generateOutput = async () => { el('btnGenerateOutput').click(); };
 
   </script>
 </body>
