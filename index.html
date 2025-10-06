@@ -1,14 +1,123 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>IT Operations Task Manager</title>
+  <meta charset="utf-8" />
+  <title>IT Operations Task Manager (Realtime)</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
   <script src="https://cdn.tailwindcss.com"></script>
-  <script type="module">
-    // ================= Firebase Setup =================
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.2/firebase-app.js";
-    import { getDatabase, ref, set, onValue, update, remove } from "https://www.gstatic.com/firebasejs/9.22.2/firebase-database.js";
+  <style>
+    /* small niceties */
+    .tab-active { background-color:#2563eb; color:white; }
+    .tab-inactive { background:#f3f4f6; color:#111827; }
+  </style>
+</head>
+<body class="bg-gray-50 min-h-screen p-6 font-sans">
+  <div class="max-w-6xl mx-auto bg-white rounded-xl shadow p-6">
+    <h1 class="text-2xl font-bold mb-4">IT Operations Task Manager (Realtime)</h1>
 
+    <!-- top controls -->
+    <div class="flex gap-3 items-center mb-4">
+      <div class="flex space-x-2" id="tabs">
+        <button id="tab-daily" class="px-4 py-2 rounded tab-active" onclick="showTab('daily')">Daily</button>
+        <button id="tab-weekly" class="px-4 py-2 rounded tab-inactive" onclick="showTab('weekly')">Weekly</button>
+        <button id="tab-monthly" class="px-4 py-2 rounded tab-inactive" onclick="showTab('monthly')">Monthly</button>
+        <button id="tab-patching" class="px-4 py-2 rounded tab-inactive" onclick="showTab('patching')">Patching</button>
+        <button id="tab-monitoring" class="px-4 py-2 rounded tab-inactive" onclick="showTab('monitoring')">Monitoring</button>
+        <button id="tab-output" class="px-4 py-2 rounded tab-inactive" onclick="showTab('output')">Output</button>
+      </div>
+
+      <div class="ml-auto flex items-center gap-2">
+        <button onclick="resetAll()" class="bg-red-500 text-white px-3 py-2 rounded shadow">Reset All</button>
+      </div>
+    </div>
+
+    <!-- ---------- Daily ---------- -->
+    <div id="daily" class="tab-content">
+      <h2 class="text-lg font-semibold mb-3">Daily Tasks</h2>
+      <div id="dailyTasks" class="space-y-2 mb-3"></div>
+
+      <div class="flex gap-2 items-center">
+        <input id="newTask" class="flex-1 border rounded p-2" placeholder="Add new task (e.g. PW)" />
+        <button onclick="addTask()" class="bg-green-500 text-white px-4 py-2 rounded">Add</button>
+      </div>
+    </div>
+
+    <!-- ---------- Weekly ---------- -->
+    <div id="weekly" class="tab-content hidden">
+      <h2 class="text-lg font-semibold mb-2">Weekly Tasks (free-text)</h2>
+      <textarea id="weeklyText" oninput="saveTextRealtime('weekly')" class="w-full border rounded p-3 h-40" placeholder="Type weekly tasks..."></textarea>
+    </div>
+
+    <!-- ---------- Monthly ---------- -->
+    <div id="monthly" class="tab-content hidden">
+      <h2 class="text-lg font-semibold mb-2">Monthly Tasks (free-text)</h2>
+      <textarea id="monthlyText" oninput="saveTextRealtime('monthly')" class="w-full border rounded p-3 h-40" placeholder="Type monthly tasks..."></textarea>
+    </div>
+
+    <!-- ---------- Patching ---------- -->
+    <div id="patching" class="tab-content hidden">
+      <h2 class="text-lg font-semibold mb-2">Patching Tasks (free-text)</h2>
+      <textarea id="patchingText" oninput="saveTextRealtime('patching')" class="w-full border rounded p-3 h-40" placeholder="Type patching tasks..."></textarea>
+    </div>
+
+    <!-- ---------- Monitoring ---------- -->
+    <div id="monitoring" class="tab-content hidden">
+      <h2 class="text-lg font-semibold mb-3">Monitoring - shifts & assignments</h2>
+
+      <div class="grid md:grid-cols-3 gap-4 mb-4">
+        <!-- shift cards -->
+        <div class="border rounded p-4">
+          <h3 class="font-semibold mb-2">1st Shift (06:30 - 14:30)</h3>
+          <div id="shift1-members" class="space-y-1 mb-2"></div>
+          <div class="flex gap-2">
+            <button onclick="generateShift('shift1')" class="bg-blue-600 text-white px-3 py-2 rounded">Generate (shift1)</button>
+            <button onclick="clearShift('shift1')" class="bg-gray-200 px-3 py-2 rounded">Clear</button>
+          </div>
+          <div id="shift1-slots" class="mt-3 space-y-2"></div>
+        </div>
+
+        <div class="border rounded p-4">
+          <h3 class="font-semibold mb-2">2nd Shift (14:30 - 22:30)</h3>
+          <div id="shift2-members" class="space-y-1 mb-2"></div>
+          <div class="flex gap-2">
+            <button onclick="generateShift('shift2')" class="bg-blue-600 text-white px-3 py-2 rounded">Generate (shift2)</button>
+            <button onclick="clearShift('shift2')" class="bg-gray-200 px-3 py-2 rounded">Clear</button>
+          </div>
+          <div id="shift2-slots" class="mt-3 space-y-2"></div>
+        </div>
+
+        <div class="border rounded p-4">
+          <h3 class="font-semibold mb-2">3rd Shift (22:30 - 06:30)</h3>
+          <div id="shift3-members" class="space-y-1 mb-2"></div>
+          <div class="flex gap-2">
+            <button onclick="generateShift('shift3')" class="bg-blue-600 text-white px-3 py-2 rounded">Generate (shift3)</button>
+            <button onclick="clearShift('shift3')" class="bg-gray-200 px-3 py-2 rounded">Clear</button>
+          </div>
+          <div id="shift3-slots" class="mt-3 space-y-2"></div>
+        </div>
+      </div>
+
+      <div class="text-sm text-gray-600">Tip: check the members present for a shift, click Generate — it will evenly split the shift time into slots. Then you may override any slot using the dropdown; changes sync to everyone.</div>
+    </div>
+
+    <!-- ---------- Output ---------- -->
+    <div id="output" class="tab-content hidden">
+      <h2 class="text-lg font-semibold mb-3">Generated Output</h2>
+      <div class="flex gap-2 mb-3">
+        <button onclick="generateOutput()" class="bg-indigo-600 text-white px-4 py-2 rounded">Generate Output</button>
+        <button onclick="downloadOutput()" class="bg-gray-200 px-4 py-2 rounded">Download .txt</button>
+      </div>
+      <textarea id="finalOutput" class="w-full border rounded p-3 h-64"></textarea>
+    </div>
+  </div>
+
+  <!-- Firebase + App logic -->
+  <script type="module">
+    // ---------- Firebase imports ----------
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.2/firebase-app.js";
+    import { getDatabase, ref, set, onValue, update, remove, get, child } from "https://www.gstatic.com/firebasejs/9.22.2/firebase-database.js";
+
+    // ---------- Firebase config (your keys) ----------
     const firebaseConfig = {
       apiKey: "AIzaSyC56asNTd04xhDU4OlnBHS4zNxj_aiiFhM",
       authDomain: "activity-log-275ce.firebaseapp.com",
@@ -22,237 +131,399 @@
     const app = initializeApp(firebaseConfig);
     const db = getDatabase(app);
 
-    // ================= Members =================
-    const members = ["IRO","RDE","FFA","NLA","MAG","JMA"];
-
-    // ================= Default Tasks =================
-    let defaultTasks = ["PW","ARC","Loglogic","TM1Top","ISMS","CRITICAL","PROXY","HO","EMEA Ticket","TO","Remind AX"];
-    let tasks = [...defaultTasks];
-
-    // ================= Tab Navigation =================
-    window.showTab = function(tab) {
-      document.querySelectorAll(".tab-content").forEach(div => div.classList.add("hidden"));
-      document.getElementById(tab).classList.remove("hidden");
+    // ---------- default members & tasks ----------
+    const DEFAULT_MEMBERS = {
+      IRO: "Ian Romero",
+      RDE: "Rhizza De Guzman",
+      FFA: "Felix Factor",
+      NLA: "Nathan Lapena",
+      MAG: "Michael Henry Aglubat",
+      JMA: "Jelyn Malubay"
     };
 
-    // ================= Daily Tasks =================
-    function loadTasks(state = {}) {
-      const container = document.getElementById("dailyTasks");
-      container.innerHTML = "";
+    const DEFAULT_TASKS = ["PW","ARC","Loglogic","TM1Top","ISMS","CRITICAL","PROXY","HO","EMEA Ticket","TO","Remind AX"];
+
+    // ---------- utility ----------
+    function el(q) { return document.querySelector(q); }
+    function els(q) { return Array.from(document.querySelectorAll(q)); }
+    function showTab(tabId) {
+      window.showTab = (t) => {
+        els('.tab-content').forEach(d => d.classList.add('hidden'));
+        document.getElementById(t).classList.remove('hidden');
+        // update tab button styling
+        ['daily','weekly','monthly','patching','monitoring','output'].forEach(name=>{
+          const btn = document.getElementById('tab-' + name);
+          if (!btn) return;
+          if (name === t) { btn.classList.add('tab-active'); btn.classList.remove('tab-inactive'); }
+          else { btn.classList.remove('tab-active'); btn.classList.add('tab-inactive'); }
+        });
+      };
+      window.showTab(tabId);
+    }
+    window.showTab = showTab; // expose in global
+
+    // ---------- seed defaults if missing ----------
+    async function ensureDefaults() {
+      // teamMembers
+      const teamRef = ref(db, 'teamMembers');
+      const teamSnap = await get(teamRef);
+      if (!teamSnap.exists()) {
+        await set(teamRef, DEFAULT_MEMBERS);
+      }
+      // dailyTasks
+      const dailyRef = ref(db, 'dailyTasks');
+      const dailySnap = await get(dailyRef);
+      if (!dailySnap.exists()) {
+        // seed default tasks
+        const updates = {};
+        DEFAULT_TASKS.forEach(t => updates[t] = { checked: false, member: "" });
+        await set(dailyRef, updates);
+      }
+      // monitoringSchedules - ensure shifts exist (members array empty)
+      const schedulesRef = ref(db, 'monitoringSchedules');
+      const schedulesSnap = await get(schedulesRef);
+      if (!schedulesSnap.exists()) {
+        const base = {
+          shift1: { start: "06:30", end: "14:30", members: {}, slots: {} },
+          shift2: { start: "14:30", end: "22:30", members: {}, slots: {} },
+          shift3: { start: "22:30", end: "06:30", members: {}, slots: {} }
+        };
+        await set(schedulesRef, base);
+      }
+      // weekly/monthly/patching/finalOutput keys exist (empty)
+      if (!(await get(ref(db,'weekly'))).exists()) await set(ref(db,'weekly'), "");
+      if (!(await get(ref(db,'monthly'))).exists()) await set(ref(db,'monthly'), "");
+      if (!(await get(ref(db,'patching'))).exists()) await set(ref(db,'patching'), "");
+      if (!(await get(ref(db,'finalOutput'))).exists()) await set(ref(db,'finalOutput'), "");
+    }
+
+    // ---------- react to teamMembers changes ----------
+    onValue(ref(db, 'teamMembers'), snap => {
+      const memObj = snap.exists() ? snap.val() : DEFAULT_MEMBERS;
+      // render member checkboxes per shift (for choosing who is on-shift)
+      ['shift1','shift2','shift3'].forEach(shiftId => {
+        const container = document.getElementById(shiftId + '-members');
+        container.innerHTML = '';
+        Object.entries(memObj).forEach(([k,v])=>{
+          const id = `${shiftId}-m-${k}`;
+          const wrapper = document.createElement('div');
+          wrapper.className = 'flex items-center gap-2';
+          wrapper.innerHTML = `
+            <input type="checkbox" id="${id}" data-key="${k}" />
+            <label for="${id}" class="text-sm">${k} — ${v}</label>
+          `;
+          container.appendChild(wrapper);
+        });
+        // after creating inputs, hook them up to reflect DB selected members
+      });
+      // also store a local members mapping for dropdowns
+      window._membersMap = memObj;
+      // render dropdown options for existing slot selects if any
+      els('select[data-slot]').forEach(sel => {
+        const cur = sel.value;
+        sel.innerHTML = `<option value="">-- Select --</option>` +
+          Object.entries(memObj).map(([k,v])=>`<option value="${k}">${k} (${v})</option>`).join('');
+        if (cur) sel.value = cur;
+      });
+    });
+
+    // ---------- helper to render daily tasks ----------
+    onValue(ref(db, 'dailyTasks'), snap => {
+      const data = snap.exists() ? snap.val() : {};
+      // populate tasks array (preserve default order if empty)
+      const dbTasks = Object.keys(data || {});
+      if (dbTasks.length) { window._tasks = dbTasks; }
+      else { window._tasks = DEFAULT_TASKS.slice(); }
+      renderDailyTasks(data);
+    });
+
+    function renderDailyTasks(state = {}) {
+      const container = el('#dailyTasks');
+      container.innerHTML = '';
+      const tasks = window._tasks || DEFAULT_TASKS;
       tasks.forEach(task => {
-        const row = document.createElement("div");
-        row.className = "flex items-center space-x-2";
+        const row = document.createElement('div');
+        row.className = 'flex items-center gap-3';
+        const checked = state[task]?.checked || false;
+        const member = state[task]?.member || '';
         row.innerHTML = `
-          <input type="checkbox" data-task="${task}" class="taskCheck">
-          <label class="w-32">${task}</label>
-          <select data-task="${task}" class="border p-1 rounded">
+          <input type="checkbox" data-task="${task}" ${checked ? 'checked' : ''} class="taskCheck" />
+          <div class="flex-1">
+            <div class="font-medium">${task}</div>
+          </div>
+          <select data-task="${task}" class="border rounded p-1">
             <option value="">-- Assign --</option>
-            ${members.map(m => `<option value="${m}">${m}</option>`).join("")}
           </select>
-          <button data-remove="${task}" class="bg-red-500 text-white px-2 rounded">X</button>
+          <button data-remove="${task}" class="ml-2 bg-red-500 text-white px-2 py-1 rounded">Remove</button>
         `;
         container.appendChild(row);
-      });
+        // populate dropdown options (trigrams)
+        const sel = row.querySelector('select[data-task]');
+        const memObj = window._membersMap || DEFAULT_MEMBERS;
+        sel.innerHTML = `<option value="">-- Assign --</option>` +
+          Object.entries(memObj).map(([k,v])=>`<option value="${k}">${k} (${v})</option>`).join('');
+        sel.value = member;
+      }
 
-      // restore state
-      Object.entries(state).forEach(([task, val]) => {
-        const cb = document.querySelector(`input[data-task="${task}"]`);
-        const sel = document.querySelector(`select[data-task="${task}"]`);
-        if (cb) cb.checked = val.checked;
-        if (sel) sel.value = val.member;
-      });
+      );
 
       // listeners
-      document.querySelectorAll(".taskCheck").forEach(cb => {
-        cb.addEventListener("change", () => {
-          const task = cb.getAttribute("data-task");
-          const member = document.querySelector(`select[data-task="${task}"]`).value;
-          update(ref(db, "dailyTasks/" + task), { checked: cb.checked, member: member || "" });
-        });
+      els('input.taskCheck').forEach(cb => {
+        cb.onchange = () => {
+          const task = cb.getAttribute('data-task');
+          const member = document.querySelector(`select[data-task="${task}"]`).value || "";
+          update(ref(db, 'dailyTasks/' + task), { checked: cb.checked, member });
+        };
       });
-
-      document.querySelectorAll("select[data-task]").forEach(sel => {
-        sel.addEventListener("change", () => {
-          const task = sel.getAttribute("data-task");
-          const checked = document.querySelector(`input[data-task="${task}"]`).checked;
-          update(ref(db, "dailyTasks/" + task), { checked: checked, member: sel.value || "" });
-        });
+      els('select[data-task]').forEach(sel => {
+        sel.onchange = () => {
+          const task = sel.getAttribute('data-task');
+          const checked = document.querySelector(`input[data-task="${task}"]`).checked || false;
+          update(ref(db, 'dailyTasks/' + task), { checked, member: sel.value || "" });
+        };
       });
-
-      document.querySelectorAll("button[data-remove]").forEach(btn => {
-        btn.addEventListener("click", () => {
-          const task = btn.getAttribute("data-remove");
-          tasks = tasks.filter(t => t !== task);
-          remove(ref(db, "dailyTasks/" + task));
-          loadTasks(state);
-        });
+      els('button[data-remove]').forEach(btn => {
+        btn.onclick = async () => {
+          const task = btn.getAttribute('data-remove');
+          // remove from DB and local list
+          await remove(ref(db, 'dailyTasks/' + task));
+          // remove local array entry if exists
+          const arr = window._tasks || DEFAULT_TASKS;
+          window._tasks = arr.filter(t => t !== task);
+          renderDailyTasks(await (await get(ref(db,'dailyTasks'))).val() || {});
+        };
       });
     }
 
-    // Add new Daily Task
-    window.addTask = function() {
-      const val = document.getElementById("newTask").value.trim();
-      if (val && !tasks.includes(val)) {
-        tasks.push(val);
-        loadTasks();
-        document.getElementById("newTask").value = "";
-      }
-    };
-
-    // Realtime listener for Daily Tasks
-    onValue(ref(db, "dailyTasks"), snap => {
-      if (snap.exists()) loadTasks(snap.val());
-      else loadTasks(); // show defaults if DB empty
-    });
-
-    // ================= Weekly / Monthly / Patching =================
-    function setupTextSync(id) {
-      const refPath = ref(db, id);
-      onValue(refPath, snap => {
-        document.getElementById(id + "Text").value = snap.exists() ? snap.val() : "";
+    // ---------- textareas real-time syncing ----------
+    // helper to write and watch text nodes
+    function watchTextNode(name, elId) {
+      const nodeRef = ref(db, name);
+      onValue(nodeRef, snap => {
+        const val = snap.exists() ? snap.val() : '';
+        const ta = document.getElementById(elId);
+        if (ta && ta.value !== val) ta.value = val;
       });
-      window["save" + id] = function() {
-        set(refPath, document.getElementById(id + "Text").value);
+      window['saveTextRealtime'] = window['saveTextRealtime'] || function(type) {
+        // type is 'weekly' or 'monthly' or 'patching'
+        const id = type + 'Text';
+        const val = document.getElementById(id).value;
+        set(ref(db, type), val);
       };
     }
+    watchTextNode('weekly','weeklyText');
+    watchTextNode('monthly','monthlyText');
+    watchTextNode('patching','patchingText');
 
-    setupTextSync("weekly");
-    setupTextSync("monthly");
-    setupTextSync("patching");
+    // ---------- monitoring schedules handling ----------
+    // helper to render a shift UI (members checkbox -> persisted) and slots (selects)
+    async function renderShift(shiftId) {
+      const shiftRoot = ref(db, 'monitoringSchedules/' + shiftId);
+      const shiftSnap = await get(shiftRoot);
+      const shiftData = shiftSnap.exists() ? shiftSnap.val() : { start: (shiftId==='shift1'?'06:30':shiftId==='shift2'?'14:30':'22:30'), end: (shiftId==='shift1'?'14:30':shiftId==='shift2'?'22:30':'06:30'), members:{}, slots:{} };
 
-    // ================= Monitoring Schedule =================
-    window.generateMonitoring = function() {
-      const memberCount = members.length;
-      const shifts = [
-        "06:30 AM - 08:30 AM",
-        "08:30 AM - 10:30 AM",
-        "10:30 AM - 12:30 PM",
-        "12:30 PM - 02:30 PM"
-      ];
-
-      let schedule = {};
-      shifts.forEach((slot, i) => {
-        schedule[slot] = members[i % memberCount];
+      // render member checkboxes and set their checked state based on shiftData.members
+      const memContainer = el('#' + shiftId + '-members');
+      // memContainer already contains inputs (seeded earlier), we should check/uncheck based on DB
+      els('#' + shiftId + '-members input[type=checkbox]').forEach(cb => {
+        const key = cb.getAttribute('data-key');
+        cb.checked = !!shiftData.members?.[key];
+        cb.onchange = () => {
+          // update DB members for this shift
+          const updates = {};
+          updates['monitoringSchedules/' + shiftId + '/members/' + key] = cb.checked ? true : null;
+          // using update + set null to remove
+          update(ref(db, 'monitoringSchedules/' + shiftId + '/members'), shiftData.members || {});
+          // we will just set the single path:
+          if (cb.checked) set(ref(db, 'monitoringSchedules/' + shiftId + '/members/' + key), true);
+          else remove(ref(db, 'monitoringSchedules/' + shiftId + '/members/' + key));
+        };
       });
 
-      set(ref(db, "monitoring"), schedule);
-    };
-
-    onValue(ref(db, "monitoring"), snap => {
-      const container = document.getElementById("monitoringOutput");
-      container.innerHTML = "";
-      if (snap.exists()) {
-        Object.entries(snap.val()).forEach(([slot, member]) => {
-          const div = document.createElement("div");
-          div.textContent = `${slot} - ${member}`;
-          container.appendChild(div);
-        });
+      // render slots
+      const slotsContainer = el('#' + shiftId + '-slots');
+      slotsContainer.innerHTML = '';
+      const slotsObj = shiftData.slots || {};
+      // if no slots exist, show note
+      if (!Object.keys(slotsObj).length) {
+        slotsContainer.innerHTML = '<div class="text-sm text-gray-500">No slots generated yet. Click Generate to auto-divide the shift based on selected members.</div>';
+        return;
       }
-    });
+      // render each slot row with dropdown
+      Object.entries(slotsObj).forEach(([slotTime, slotData]) => {
+        const row = document.createElement('div');
+        row.className = 'flex gap-3 items-center';
+        row.innerHTML = `
+          <div class="w-56 text-sm">${slotTime}</div>
+          <select data-slot="${shiftId}|${slotTime}" class="border rounded p-1"></select>
+        `;
+        slotsContainer.appendChild(row);
+        const sel = row.querySelector('select');
+        // populate options
+        const memObj = window._membersMap || DEFAULT_MEMBERS;
+        sel.innerHTML = `<option value="">-- Select member --</option>` +
+          Object.entries(memObj).map(([k,v])=>`<option value="${k}">${k} (${v})</option>`).join('');
+        sel.value = slotData?.member || "";
+        // change handler writes to DB
+        sel.onchange = () => {
+          const [sId, sTime] = sel.getAttribute('data-slot').split('|');
+          set(ref(db, `monitoringSchedules/${sId}/slots/${sTime}`), { member: sel.value || "" });
+        };
+      });
+    }
 
-    // ================= Generate Output =================
-    window.generateOutput = function() {
-      let output = "------ DAILY TASKS ------\n";
-      onValue(ref(db, "dailyTasks"), snap => {
-        if (snap.exists()) {
-          Object.entries(snap.val()).forEach(([task, val]) => {
-            if (val.checked) output += `${task} - ${val.member}\n`;
-          });
+    // watch shifts in realtime
+    onValue(ref(db, 'monitoringSchedules/shift1'), snap => { renderShift('shift1'); });
+    onValue(ref(db, 'monitoringSchedules/shift2'), snap => { renderShift('shift2'); });
+    onValue(ref(db, 'monitoringSchedules/shift3'), snap => { renderShift('shift3'); });
+
+    // ---------- generate/clear shift functions ----------
+    // compute slots by evenly splitting the time range into N parts (N = selectedMembers.length)
+    function splitShiftIntoSlots(startHHMM, endHHMM, parts) {
+      // start and end are "HH:MM"
+      function toDateToday(hm) {
+        const [hh,mm] = hm.split(':').map(Number);
+        const d = new Date();
+        d.setHours(hh, mm, 0, 0);
+        return d;
+      }
+      let start = toDateToday(startHHMM);
+      let end = toDateToday(endHHMM);
+      // handle overnight end (if end <= start, add 1 day)
+      if (end <= start) end = new Date(end.getTime() + 24*60*60*1000);
+      const totalMin = (end - start) / 60000;
+      const slotMin = totalMin / parts;
+      const slots = [];
+      let cur = new Date(start);
+      for (let i=0;i<parts;i++) {
+        const s = new Date(cur);
+        cur.setMinutes(cur.getMinutes() + slotMin);
+        const e = new Date(cur);
+        function fmt(d) {
+          let h = d.getHours();
+          const m = d.getMinutes();
+          const ampm = h >= 12 ? 'PM' : 'AM';
+          h = h % 12 || 12;
+          return `${String(h).padStart(2,'')}:${String(m).padStart(2,'0')} ${ampm}`;
         }
-      }, { onlyOnce: true });
+        slots.push(`${fmt(s)} - ${fmt(e)}`);
+      }
+      return slots;
+    }
 
-      output += "\n------ WEEKLY TASKS ------\n";
-      output += document.getElementById("weeklyText").value + "\n";
+    window.generateShift = async function(shiftId) {
+      // read which members were checked for this shift
+      const membersChecked = els(`#${shiftId}-members input[type=checkbox]`).filter(cb=>cb.checked).map(cb=>cb.getAttribute('data-key'));
+      if (!membersChecked.length) {
+        alert('No members selected for this shift. Please check at least one member.');
+        return;
+      }
+      // shift times as defined
+      const shiftTimes = {
+        shift1: {start: '06:30', end: '14:30'},
+        shift2: {start: '14:30', end: '22:30'},
+        shift3: {start: '22:30', end: '06:30'}
+      };
+      const {start,end} = shiftTimes[shiftId];
 
-      output += "\n------ MONTHLY TASKS ------\n";
-      output += document.getElementById("monthlyText").value + "\n";
+      // create slots equal to number of selected members
+      const slots = splitShiftIntoSlots(start, end, membersChecked.length);
 
-      output += "\n------ PATCHING TASKS ------\n";
-      output += document.getElementById("patchingText").value + "\n";
+      // build object to set in DB
+      const slotsObj = {};
+      slots.forEach((s, i) => {
+        slotsObj[s] = { member: membersChecked[i] || "" };
+      });
 
-      output += "\n------ MONITORING SCHEDULE ------\n";
-      const monitor = document.getElementById("monitoringOutput").innerText;
-      output += monitor;
+      // set members list for this shift (persist who is on-shift)
+      const membersObj = {};
+      membersChecked.forEach(k => membersObj[k] = true);
 
-      const timestamp = new Date().toLocaleString();
-      output += `\n\nGenerated on: ${timestamp}`;
-
-      document.getElementById("finalOutput").value = output;
-      set(ref(db, "finalOutput"), output);
+      await set(ref(db, `monitoringSchedules/${shiftId}`), { start, end, members: membersObj, slots: slotsObj });
+      // renderShift will be called automatically by onValue listener
     };
 
-    onValue(ref(db, "finalOutput"), snap => {
-      if (snap.exists()) document.getElementById("finalOutput").value = snap.val();
+    window.clearShift = async function(shiftId) {
+      await set(ref(db, `monitoringSchedules/${shiftId}`), { start: (shiftId==='shift1'?'06:30':shiftId==='shift2'?'14:30':'22:30'), end: (shiftId==='shift1'?'14:30':shiftId==='shift2'?'22:30':'06:30'), members: {}, slots: {} });
+    };
+
+    // ---------- Output generation ----------
+    window.generateOutput = async function() {
+      // build output from current DB state - we'll read snapshot once
+      const root = ref(db);
+      const snapshot = await get(root);
+      const data = snapshot.exists() ? snapshot.val() : {};
+
+      let out = `IT OPERATIONS TASKS REPORT\nGenerated: ${new Date().toLocaleString()}\n\n`;
+
+      out += '--- Daily Tasks ---\n';
+      const daily = data.dailyTasks || {};
+      Object.entries(daily).forEach(([task,info])=>{
+        out += `${task} — ${info.member || 'Unassigned'} — ${info.checked ? 'Done' : 'Pending'}\n`;
+      });
+
+      out += '\n--- Weekly Tasks ---\n' + (data.weekly || '') + '\n';
+      out += '\n--- Monthly Tasks ---\n' + (data.monthly || '') + '\n';
+      out += '\n--- Patching Tasks ---\n' + (data.patching || '') + '\n';
+
+      out += '\n--- Monitoring Schedules ---\n';
+      const sched = data.monitoringSchedules || {};
+      Object.entries(sched).forEach(([shiftId, shift]) => {
+        out += `\n${shiftId.toUpperCase()} (${shift.start} - ${shift.end})\n`;
+        const slots = shift.slots || {};
+        Object.entries(slots).forEach(([slotTime, s]) => {
+          out += `${slotTime} — ${s.member || 'Unassigned'}\n`;
+        });
+      });
+
+      // set finalOutput in DB and update UI
+      document.getElementById('finalOutput').value = out;
+      await set(ref(db, 'finalOutput'), out);
+    };
+
+    onValue(ref(db,'finalOutput'), snap => {
+      if (snap.exists()) document.getElementById('finalOutput').value = snap.val();
     });
 
-    // ================= Reset Everything =================
-    window.resetAll = function() {
-      remove(ref(db));
-      document.getElementById("weeklyText").value = "";
-      document.getElementById("monthlyText").value = "";
-      document.getElementById("patchingText").value = "";
-      document.getElementById("monitoringOutput").innerHTML = "";
-      document.getElementById("finalOutput").value = "";
-      tasks = [...defaultTasks];
-      loadTasks();
+    // ---------- reset all ----------
+    window.resetAll = async function() {
+      if (!confirm('Reset ALL data in Firebase? This will clear tasks, schedules, and texts.')) return;
+      await remove(ref(db));
+      await ensureDefaults();
+      alert('Reset complete. Defaults restored.');
     };
 
+    // ---------- download output ----------
+    window.downloadOutput = function() {
+      const text = document.getElementById('finalOutput').value || '';
+      const blob = new Blob([text], {type:'text/plain'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = `itops-report-${new Date().toISOString().slice(0,10)}.txt`;
+      document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+    };
+
+    window.downloadOutput = downloadOutput;
+
+    // ---------- initial boot ----------
+    (async function init() {
+      await ensureDefaults();
+      // initial tab
+      showTab('daily');
+      // make sure shifts render initial state
+      renderShift('shift1');
+      renderShift('shift2');
+      renderShift('shift3');
+    })();
+
+    // expose a couple helper functions to window
+    window.generateShift = window.generateShift;
+    window.clearShift = window.clearShift;
+    window.addTask = window.addTask;
+    window.generateOutput = window.generateOutput;
+    window.resetAll = window.resetAll;
+    window.showTab = showTab;
+    window.saveTextRealtime = window.saveTextRealtime;
   </script>
-</head>
-<body class="p-6 font-sans bg-gray-50">
-  <h1 class="text-2xl font-bold mb-4">IT Operations Task Manager</h1>
-
-  <!-- Tabs -->
-  <div class="flex space-x-2 border-b mb-4">
-    <button onclick="showTab('daily')" class="px-4 py-2 bg-blue-500 text-white rounded-t">Daily</button>
-    <button onclick="showTab('weekly')" class="px-4 py-2 bg-gray-200 rounded-t">Weekly</button>
-    <button onclick="showTab('monthly')" class="px-4 py-2 bg-gray-200 rounded-t">Monthly</button>
-    <button onclick="showTab('patching')" class="px-4 py-2 bg-gray-200 rounded-t">Patching</button>
-    <button onclick="showTab('monitoring')" class="px-4 py-2 bg-gray-200 rounded-t">Monitoring</button>
-    <button onclick="showTab('output')" class="px-4 py-2 bg-gray-200 rounded-t">Output</button>
-  </div>
-
-  <!-- Daily -->
-  <div id="daily" class="tab-content">
-    <h2 class="text-lg font-semibold mb-2">Daily Tasks</h2>
-    <div id="dailyTasks" class="space-y-2"></div>
-    <div class="mt-3 flex">
-      <input id="newTask" placeholder="Add new task" class="border flex-1 p-1 rounded">
-      <button onclick="addTask()" class="ml-2 bg-green-500 text-white px-3 rounded">Add</button>
-    </div>
-  </div>
-
-  <!-- Weekly -->
-  <div id="weekly" class="tab-content hidden">
-    <h2 class="text-lg font-semibold mb-2">Weekly Tasks</h2>
-    <textarea id="weeklyText" class="w-full border p-2 h-40" oninput="saveweekly()"></textarea>
-  </div>
-
-  <!-- Monthly -->
-  <div id="monthly" class="tab-content hidden">
-    <h2 class="text-lg font-semibold mb-2">Monthly Tasks</h2>
-    <textarea id="monthlyText" class="w-full border p-2 h-40" oninput="savemonthly()"></textarea>
-  </div>
-
-  <!-- Patching -->
-  <div id="patching" class="tab-content hidden">
-    <h2 class="text-lg font-semibold mb-2">Patching Tasks</h2>
-    <textarea id="patchingText" class="w-full border p-2 h-40" oninput="savepatching()"></textarea>
-  </div>
-
-  <!-- Monitoring -->
-  <div id="monitoring" class="tab-content hidden">
-    <h2 class="text-lg font-semibold mb-2">Monitoring Schedule</h2>
-    <button onclick="generateMonitoring()" class="bg-blue-500 text-white px-4 py-2 rounded">Generate Monitoring Schedule</button>
-    <div id="monitoringOutput" class="mt-3 space-y-1"></div>
-  </div>
-
-  <!-- Output -->
-  <div id="output" class="tab-content hidden">
-    <h2 class="text-lg font-semibold mb-2">Generated Output</h2>
-    <button onclick="generateOutput()" class="bg-blue-500 text-white px-4 py-2 rounded mb-2">Generate Output</button>
-    <button onclick="resetAll()" class="bg-red-500 text-white px-4 py-2 rounded mb-2">Reset</button>
-    <textarea id="finalOutput" class="w-full border p-2 h-60"></textarea>
-  </div>
 </body>
 </html>
