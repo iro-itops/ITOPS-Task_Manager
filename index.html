@@ -2,24 +2,27 @@
 <html lang="en">
 <head>
   <meta charset="utf-8"/>
-  <title>📃 IT Operations Task Manager</title>
+  <title>IT Operations Task Manager (Realtime)</title>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     .tab-active { background-color:#2563eb; color:white; }
     .tab-inactive { background:#f3f4f6; color:#111827; }
     .locked { opacity: 0.6; }
+    /* subtle style for monitoring selects */
+    .slot-select { min-width: 11rem; }
+    .slot-select option[disabled][value=""] { color: #6b7280; }
   </style>
 </head>
 <body class="bg-gray-50 min-h-screen p-6 font-sans">
   <div class="max-w-6xl mx-auto bg-white rounded-xl shadow p-6">
     <header class="flex items-start gap-4 mb-6">
       <div>
-        <h1 class="text-2xl font-bold">🚨 IT Operations Task Manager</h1>
-        <div class="text-sm text-gray-600">Realtime collaboration — all users can edit. Locks are anonymous and auto-expire.</div>
+        <h1 class="text-2xl font-bold">IT Operations Task Manager (Realtime)</h1>
+        <div class="text-sm text-gray-600">Realtime collaboration — all users can edit. Locks are anonymous and auto-expire (2 minutes).</div>
       </div>
       <div class="ml-auto">
-        <button id="resetBtn" class="bg-red-500 text-white px-3 py-2 rounded">Reset All</button>
+        <button id="resetBtn" class="bg-red-500 text-white px-3 py-2 rounded">Reset All (safe)</button>
       </div>
     </header>
 
@@ -122,14 +125,14 @@
           <div id="shift3-slots" class="mt-3 space-y-2"></div>
         </div>
       </div>
-      <p class="text-sm text-gray-600 mt-3">Select members present for the shift then click Generate. You may override any slot from the dropdown; changes sync instantly. Slots are locked briefly when edited to avoid collisions.</p>
+      <p class="text-sm text-gray-600 mt-3">Tick members (TRIGRAM) present for the shift, click <b>Generate</b> to create time slots (all start as “Select Member”). Choose assignees from the dropdowns; changes sync instantly. Slot locks apply only when a member is selected.</p>
     </section>
 
     <!-- OUTPUT -->
     <section id="output" class="tab-content hidden">
       <h2 class="text-lg font-semibold mb-3">Generated Output</h2>
       <div class="flex gap-2 mb-3">
-        <button id="btnGenerateOutput" class="bg-indigo-600 text-white px-4 py-2 rounded">Generate Output</button>
+        <button id="btnGenerateOutput" class="bg-indigo-600 text-white px-4 py-2 rounded">Generate Output (current shift only)</button>
         <button id="btnCopy" class="bg-gray-200 px-4 py-2 rounded">Copy</button>
         <button id="btnDownload" class="bg-gray-200 px-4 py-2 rounded">Download .txt</button>
       </div>
@@ -140,15 +143,15 @@
   <!-- Firebase + logic -->
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.2/firebase-app.js";
-    import { getDatabase, ref, set, onValue, update, remove, get } from "https://www.gstatic.com/firebasejs/9.22.2/firebase-database.js";
+    import { getDatabase, ref, set, onValue, update, remove, get, runTransaction } from "https://www.gstatic.com/firebasejs/9.22.2/firebase-database.js";
 
-    // === Firebase config (kept as requested) ===
+    // === Firebase config (internal; no auth per your preference) ===
     const firebaseConfig = {
       apiKey: "AIzaSyC56asNTd04xhDU4OlnBHS4zNxj_aiiFhM",
       authDomain: "activity-log-275ce.firebaseapp.com",
       databaseURL: "https://activity-log-275ce-default-rtdb.asia-southeast1.firebasedatabase.app",
       projectId: "activity-log-275ce",
-      storageBucket: "activity-log-275ce.firebasestorage.app",
+      storageBucket: "activity-log-275ce.firebasedestorage.app",
       messagingSenderId: "436390670385",
       appId: "1:436390670385:web:a4e4bf77c32d4061c76510"
     };
@@ -163,38 +166,24 @@
       shift2: ["PW","ARC","ISMS","TO","EMEA"],
       shift3: ["PW","ARC","TICKET CLEANUP","SC01 SC02 BACKUP","EMEA","SSRS","UNK_EMAIL","TO"]
     };
-    const LOCK_EXPIRY_MS = 5 * 60 * 1000; // 5 minutes
+    const LOCK_EXPIRY_MS = 2 * 60 * 1000; // 2 minutes
+    const MAX_TEXT_LENGTH = 8000; // safety cap
 
     // ---------- helpers ----------
     const el = id => document.getElementById(id);
     const els = sel => Array.from(document.querySelectorAll(sel));
-    function addClass(elm, c){ if(elm) elm.classList.add(c); }
-    function removeClass(elm, c){ if(elm) elm.classList.remove(c); }
+    function sanitizeInput(str) { return String(str ?? '').replace(/[<>]/g,'').trim().slice(0,200); }
+    function sanitizeLongText(str) { return String(str ?? '').replace(/[<>]/g,'').slice(0, MAX_TEXT_LENGTH); }
+    function safeKeyFromLabel(label) { return String(label).replace(/[.#$\[\]\/]/g,'_').slice(0,200); }
 
-    // Tab switching function - MUST BE GLOBAL
+    // Tab switching
     window.showTab = function(tabName) {
-      console.log('Switching to tab:', tabName);
-      // Hide all tab contents
-      document.querySelectorAll('.tab-content').forEach(tab => {
-        tab.classList.add('hidden');
-      });
-      
-      // Remove active state from all tabs
-      document.querySelectorAll('#tabs button').forEach(button => {
-        button.classList.remove('tab-active');
-        button.classList.add('tab-inactive');
-      });
-      
-      // Show selected tab content and activate tab button
-      const tabContent = document.getElementById(tabName);
-      const tabButton = document.getElementById(`tab-${tabName}`);
-      
+      document.querySelectorAll('.tab-content').forEach(tab => tab.classList.add('hidden'));
+      document.querySelectorAll('#tabs button').forEach(b => { b.classList.remove('tab-active'); b.classList.add('tab-inactive'); });
+      const tabContent = el(tabName), tabButton = el(`tab-${tabName}`);
       if (tabContent) tabContent.classList.remove('hidden');
-      if (tabButton) {
-        tabButton.classList.remove('tab-inactive');
-        tabButton.classList.add('tab-active');
-      }
-    }
+      if (tabButton) { tabButton.classList.remove('tab-inactive'); tabButton.classList.add('tab-active'); }
+    };
 
     // anonymous client id for locks (session)
     let CLIENT_ID = sessionStorage.getItem('itops_client_id');
@@ -203,35 +192,23 @@
       sessionStorage.setItem('itops_client_id', CLIENT_ID);
     }
 
-    // ---------- ensure defaults (seed once if DB empty) ----------
+    // ---------- ensure defaults ----------
     async function ensureDefaults() {
-      console.log('Ensuring defaults...');
-      
-      // teamMembers
       const tmSnap = await get(ref(db,'teamMembers'));
-      if (!tmSnap.exists()) {
-        console.log('Setting default team members');
-        await set(ref(db,'teamMembers'), DEFAULT_MEMBERS);
-      }
+      if (!tmSnap.exists()) await set(ref(db,'teamMembers'), DEFAULT_MEMBERS);
 
-      // daily tasks per shift
       const dailySnap = await get(ref(db,'dailyTasks'));
       if (!dailySnap.exists()) {
-        console.log('Setting default daily tasks');
         const payload = {};
         Object.entries(DEFAULT_DAILY).forEach(([shift, arr])=>{
           payload[shift] = {};
           arr.forEach(t => payload[shift][t] = { checked:false, member:"" });
         });
         await set(ref(db,'dailyTasks'), payload);
-      } else {
-        console.log('Daily tasks already exist:', dailySnap.val());
       }
 
-      // monitoringSchedules skeleton
       const msSnap = await get(ref(db,'monitoringSchedules'));
       if (!msSnap.exists()) {
-        console.log('Setting default monitoring schedules');
         const base = {
           shift1: { start:"06:30", end:"14:30", members:{}, slots:{} },
           shift2: { start:"14:30", end:"22:30", members:{}, slots:{} },
@@ -244,225 +221,213 @@
       if (!(await get(ref(db,'monthly'))).exists()) await set(ref(db,'monthly'), "");
       if (!(await get(ref(db,'patching'))).exists()) await set(ref(db,'patching'), "");
       if (!(await get(ref(db,'finalOutput'))).exists()) await set(ref(db,'finalOutput'), "");
-      
-      console.log('Defaults ensured');
     }
 
-    // ---------- teamMembers watcher (renders member checkboxes for each shift) ----------
+    // ---------- teamMembers watcher ----------
     onValue(ref(db,'teamMembers'), snap => {
       const map = snap.exists() ? snap.val() : DEFAULT_MEMBERS;
       window._membersMap = map;
       ['shift1','shift2','shift3'].forEach(shiftId => {
         const container = el(shiftId + '-members');
-        if (container) {
-          container.innerHTML = '';
-          Object.entries(map).forEach(([k,v]) => {
-            const id = `${shiftId}-m-${k}`;
-            const wrapper = document.createElement('div');
-            wrapper.className = 'flex items-center gap-2';
-            wrapper.innerHTML = `<input type="checkbox" id="${id}" data-key="${k}" /> <label for="${id}" class="text-sm">${k} — ${v}</label>`;
-            container.appendChild(wrapper);
-          });
-        }
+        if (!container) return;
+        container.innerHTML = '';
+        Object.entries(map).forEach(([k,v]) => {
+          const id = `${shiftId}-m-${k}`;
+          const row = document.createElement('div');
+          row.className = 'flex items-center gap-2';
+
+          const cb = document.createElement('input');
+          cb.type = 'checkbox'; cb.id = id; cb.dataset.key = k;
+
+          const label = document.createElement('label');
+          label.htmlFor = id; label.className = 'text-sm'; label.textContent = `${k} — ${v}`;
+
+          row.appendChild(cb); row.appendChild(label);
+          container.appendChild(row);
+        });
       });
-      // update any slot selects already on page
+
+      // refresh options in existing selects
       els('select[data-slot]').forEach(sel => {
-        const cur = sel.value;
-        sel.innerHTML = `<option value="">-- Select --</option>` + Object.entries(map).map(([k,v])=>`<option value="${k}">${k} (${v})</option>`).join('');
-        if (cur) sel.value = cur;
+        const cur = sel.value || '';
+        sel.innerHTML = '';
+        const ph = document.createElement('option');
+        ph.value = ''; ph.textContent = 'Select Member'; ph.disabled = true;
+        sel.appendChild(ph);
+        Object.entries(map).forEach(([k,v]) => {
+          const o = document.createElement('option');
+          o.value = k; o.textContent = `${k} (${v})`;
+          sel.appendChild(o);
+        });
+        sel.value = cur;
       });
     });
 
-    // add member button
+    // add member
     el('btnAddMember').addEventListener('click', async () => {
-      const key = el('newMemberKey').value.trim().toUpperCase();
-      const name = el('newMemberName').value.trim();
+      const key = sanitizeInput(el('newMemberKey').value).toUpperCase();
+      const name = sanitizeInput(el('newMemberName').value);
       if (!key || !name) return alert('Enter trigram and full name');
+      if (key.length > 6) return alert('Key too long');
       await set(ref(db, `teamMembers/${key}`), name);
-      el('newMemberKey').value = ''; el('newMemberName').value = '';
+      el('newMemberKey').value=''; el('newMemberName').value='';
     });
 
-    // ---------- daily tasks: render per shift and hooks ----------
+    // ---------- daily tasks ----------
     onValue(ref(db,'dailyTasks'), snap => {
       const data = snap.exists() ? snap.val() : {};
-      console.log('Daily tasks data received:', data);
       const shift = el('dailyShiftSelect').value || 'shift1';
       renderDailyShift(shift, data[shift] || {});
     });
 
     el('dailyShiftSelect').addEventListener('change', async () => {
-      const dataSnap = (await get(ref(db,'dailyTasks'))).val() || {};
+      const data = (await get(ref(db,'dailyTasks'))).val() || {};
       const shift = el('dailyShiftSelect').value;
-      console.log('Shift changed to:', shift, 'Data:', dataSnap[shift]);
-      renderDailyShift(shift, dataSnap[shift] || {});
+      renderDailyShift(shift, data[shift] || {});
     });
 
     function renderDailyShift(shiftId, items) {
       const container = el('dailyTasks');
       if (!container) return;
-      
       container.innerHTML = '';
-      
-      console.log('Rendering shift:', shiftId, 'Items:', items);
-      
-      // Handle both object and array formats for backward compatibility
-      let tasks = [];
-      if (items && typeof items === 'object') {
-        if (Array.isArray(items)) {
-          // Old array format
-          tasks = items;
-        } else {
-          // New object format - extract task names from keys
-          tasks = Object.keys(items);
-        }
-      } else {
-        // Fallback to defaults
-        tasks = DEFAULT_DAILY[shiftId] || [];
-        console.log('Using default tasks for shift:', shiftId, tasks);
-      }
-      
+
+      const tasks = items && typeof items === 'object' ? Object.keys(items) : (DEFAULT_DAILY[shiftId] || []);
       if (tasks.length === 0) {
-        container.innerHTML = '<div class="text-gray-500">No tasks found. Add tasks using the input below.</div>';
+        const tip = document.createElement('div');
+        tip.className = 'text-gray-500';
+        tip.textContent = 'No tasks found. Add tasks using the input below.';
+        container.appendChild(tip);
         return;
       }
-      
-      tasks.forEach(task => {
-        const taskData = (items && items[task]) || { checked: false, member: "" };
-        const row = document.createElement('div');
-        row.className = 'flex items-center gap-3 py-2 border-b';
-        row.innerHTML = `
-          <input type="checkbox" data-task="${task}" ${taskData.checked ? 'checked' : ''} class="w-4 h-4" />
-          <div class="flex-1"><div class="font-medium">${task}</div></div>
-          <select data-task="${task}" class="border rounded p-1 w-40"></select>
-          <button data-remove="${task}" class="ml-2 bg-red-500 text-white px-2 py-1 rounded text-sm">Remove</button>
-        `;
-        container.appendChild(row);
-        
-        const sel = row.querySelector('select[data-task]');
-        const memObj = window._membersMap || DEFAULT_MEMBERS;
-        sel.innerHTML = `<option value="">-- Assign --</option>` + 
-          Object.entries(memObj).map(([k,v]) => `<option value="${k}">${k} (${v})</option>`).join('');
-        sel.value = taskData.member || '';
-      });
 
-      // listeners
-      els('#dailyTasks input[type=checkbox]').forEach(cb => {
-        cb.onchange = () => {
-          const task = cb.getAttribute('data-task');
-          const shift = el('dailyShiftSelect').value;
-          const member = document.querySelector(`select[data-task="${task}"]`).value || "";
-          set(ref(db, `dailyTasks/${shift}/${task}`), { checked: cb.checked, member });
+      tasks.forEach(task => {
+        const taskData = (items && items[task]) || { checked:false, member:"" };
+        const row = document.createElement('div'); row.className = 'flex items-center gap-3 py-2 border-b';
+
+        const cb = document.createElement('input'); cb.type='checkbox'; cb.dataset.task=task; cb.checked=!!taskData.checked; cb.className='w-4 h-4';
+        const mid = document.createElement('div'); mid.className='flex-1';
+        const title = document.createElement('div'); title.className='font-medium'; title.textContent=task;
+        mid.appendChild(title);
+
+        const sel = document.createElement('select'); sel.dataset.task=task; sel.className='border rounded p-1 w-40';
+        const memObj = window._membersMap || DEFAULT_MEMBERS;
+        const ph = document.createElement('option'); ph.value=''; ph.textContent='-- Assign --'; ph.disabled=true;
+        sel.appendChild(ph);
+        Object.entries(memObj).forEach(([k,v])=>{
+          const o = document.createElement('option'); o.value=k; o.textContent=`${k} (${v})`; sel.appendChild(o);
+        });
+        sel.value = taskData.member || '';
+
+        const btn = document.createElement('button'); btn.dataset.remove=task; btn.className='ml-2 bg-red-500 text-white px-2 py-1 rounded text-sm'; btn.textContent='Remove';
+
+        row.appendChild(cb); row.appendChild(mid); row.appendChild(sel); row.appendChild(btn);
+        container.appendChild(row);
+
+        cb.onchange = async () => {
+          const shift = el('dailyShiftSelect').value || 'shift1';
+          await set(ref(db, `dailyTasks/${shift}/${task}`), { checked: cb.checked, member: sel.value || "" });
         };
-      });
-      els('#dailyTasks select[data-task]').forEach(sel => {
-        sel.onchange = () => {
-          const task = sel.getAttribute('data-task');
-          const shift = el('dailyShiftSelect').value;
-          const checked = document.querySelector(`#dailyTasks input[data-task="${task}"]`)?.checked || false;
-          set(ref(db, `dailyTasks/${shift}/${task}`), { checked, member: sel.value || "" });
+        sel.onchange = async () => {
+          const shift = el('dailyShiftSelect').value || 'shift1';
+          await set(ref(db, `dailyTasks/${shift}/${task}`), { checked: cb.checked || false, member: sel.value || "" });
         };
-      });
-      els('#dailyTasks button[data-remove]').forEach(btn => {
         btn.onclick = async () => {
-          const task = btn.getAttribute('data-remove');
-          const shift = el('dailyShiftSelect').value;
+          const shift = el('dailyShiftSelect').value || 'shift1';
           await remove(ref(db, `dailyTasks/${shift}/${task}`));
         };
       });
     }
 
-    // add task
     el('btnAddTask').addEventListener('click', async () => {
-      const val = el('newTask').value.trim();
+      const val = sanitizeInput(el('newTask').value);
       if (!val) return;
       const shift = el('dailyShiftSelect').value;
       await set(ref(db, `dailyTasks/${shift}/${val}`), { checked:false, member:"" });
       el('newTask').value = '';
     });
 
-    // ---------- textareas realtime ----------
+    // ---------- textareas ----------
     function watchText(key, elId) {
       onValue(ref(db, key), snap => {
         const v = snap.exists() ? snap.val() : '';
         const ta = el(elId);
         if (ta && ta.value !== v) ta.value = v;
       });
-      el(elId).addEventListener('input', e => set(ref(db, key), e.target.value));
+      el(elId).addEventListener('input', e => {
+        const safe = sanitizeLongText(e.target.value);
+        if (safe.length !== e.target.value.length) {
+          alert('Text truncated to maximum allowed length.');
+          e.target.value = safe;
+        }
+        set(ref(db, key), safe);
+      });
     }
     watchText('weekly','weeklyText');
     watchText('monthly','monthlyText');
     watchText('patching','patchingText');
 
-    // ---------- monitoring rendering & locks ----------
+    // ---------- monitoring (shift-based) rendering & locks ----------
     async function renderShift(shiftId) {
       const snap = await get(ref(db, `monitoringSchedules/${shiftId}`));
       const shiftData = snap.exists() ? snap.val() : { start:(shiftId==='shift1'?'06:30':shiftId==='shift2'?'14:30':'22:30'), end:(shiftId==='shift1'?'14:30':shiftId==='shift2'?'22:30':'06:30'), members:{}, slots:{} };
 
-      // set checkboxes per shift members
+      // member checkboxes
       els(`#${shiftId}-members input[type=checkbox]`).forEach(cb => {
         const key = cb.getAttribute('data-key');
         cb.checked = !!shiftData.members?.[key];
         cb.onchange = async () => {
-          // toggle membership in DB for that shift
           if (cb.checked) await set(ref(db, `monitoringSchedules/${shiftId}/members/${key}`), true);
           else await remove(ref(db, `monitoringSchedules/${shiftId}/members/${key}`));
         };
       });
 
-      // show slots
+      // render slots
       const slotsContainer = el(shiftId + '-slots');
       if (!slotsContainer) return;
-      
       slotsContainer.innerHTML = '';
       const slots = shiftData.slots || {};
-      
-      // Sort slots by time for display
-      const sortedSlots = Object.entries(slots).sort((a, b) => {
-        // Extract start time from "HH:MM AM/PM - HH:MM AM/PM" format
-        const getStartTime = (timeStr) => {
-          const startPart = timeStr.split(' - ')[0];
-          const [time, modifier] = startPart.split(' ');
-          const [hours, minutes] = time.split(':').map(Number);
-          let totalMinutes = hours * 60 + minutes;
-          if (modifier === 'PM' && hours !== 12) totalMinutes += 12 * 60;
-          if (modifier === 'AM' && hours === 12) totalMinutes -= 12 * 60;
-          return totalMinutes;
-        };
-        
-        return getStartTime(a[0]) - getStartTime(b[0]);
-      });
-      
-      if (sortedSlots.length === 0) {
-        slotsContainer.innerHTML = '<div class="text-sm text-gray-500">No slots yet. Click Generate to auto-divide.</div>';
+
+      const entries = Object.entries(slots).map(([k,v]) => [k,v]);
+      entries.sort((a,b)=> (a[1]?.startTs||0) - (b[1]?.startTs||0) || (a[0] < b[0] ? -1 : 1));
+
+      if (entries.length === 0) {
+        const tip = document.createElement('div');
+        tip.className = 'text-sm text-gray-500';
+        tip.textContent = 'No slots yet. Click Generate to auto-divide (all slots start as “Select Member”).';
+        slotsContainer.appendChild(tip);
         return;
       }
 
-      // render slot rows in sorted order
-      sortedSlots.forEach(([slotTime, sData]) => {
-        const row = document.createElement('div');
-        row.className = 'flex gap-3 items-center py-1';
-        row.innerHTML = `
-          <div class="w-56 text-sm">${slotTime}</div>
-          <select data-slot="${shiftId}|${slotTime}" class="border rounded p-1 w-40"></select>
-          <div class="text-xs text-gray-500 ml-2" data-lockinfo></div>
-        `;
-        slotsContainer.appendChild(row);
-        const sel = row.querySelector('select');
-        const lockInfoEl = row.querySelector('[data-lockinfo]');
-        // fill options
-        const memObj = window._membersMap || DEFAULT_MEMBERS;
-        sel.innerHTML = `<option value="">-- Select --</option>` + Object.entries(memObj).map(([k,v])=>`<option value="${k}">${k} (${v})</option>`).join('');
-        sel.value = sData?.member || '';
+      entries.forEach(([slotKey, sData]) => {
+        const displayLabel = sData.label || slotKey;
+        const row = document.createElement('div'); row.className='flex gap-3 items-center py-1';
+        const timeDiv = document.createElement('div'); timeDiv.className='w-56 text-sm'; timeDiv.textContent=displayLabel;
 
-        // watch slot lock info realtime
-        const slotRef = ref(db, `monitoringSchedules/${shiftId}/slots/${slotTime}`);
+        const sel = document.createElement('select'); sel.dataset.slot=`${shiftId}|${slotKey}`; sel.className='border rounded p-1 slot-select';
+        const lockInfoEl = document.createElement('div'); lockInfoEl.className='text-xs text-gray-500 ml-2'; lockInfoEl.dataset.lockinfo='';
+
+        // options
+        const memObj = window._membersMap || DEFAULT_MEMBERS;
+        const ph = document.createElement('option'); ph.value=''; ph.textContent='Select Member'; ph.disabled=true; // placeholder
+        sel.appendChild(ph);
+        Object.entries(memObj).forEach(([k,v])=>{
+          const o=document.createElement('option'); o.value=k; o.textContent=`${k} (${v})`; sel.appendChild(o);
+        });
+        sel.value = sData?.member || ''; // stays empty to show placeholder by default
+
+        row.appendChild(timeDiv); row.appendChild(sel); row.appendChild(lockInfoEl);
+        slotsContainer.appendChild(row);
+
+        const slotRef = ref(db, `monitoringSchedules/${shiftId}/slots/${slotKey}`);
+
+        // realtime lock/member sync
         onValue(slotRef, snap => {
           const val = snap.exists() ? snap.val() : {};
-          // lock display
           const lockedBy = val.lockedBy || "";
           const lockTs = val.lockTs || 0;
           const now = Date.now();
           const expired = lockTs && (now - lockTs) > LOCK_EXPIRY_MS;
+
           if (lockedBy && !expired && lockedBy !== CLIENT_ID) {
             sel.disabled = true;
             row.classList.add('locked');
@@ -473,37 +438,55 @@
             row.classList.remove('locked');
             lockInfoEl.textContent = '';
           }
+
+          const dbMember = val.member || '';
+          if (sel.value !== dbMember) sel.value = dbMember; // keep in sync
         });
 
-        // when user changes selection -> attempt to acquire lock then set, releasing is implicit by time expiry
+        // write only on valid member selection (prevents premature locks)
         sel.onchange = async () => {
-          // Try to lock: check current slot state
-          const current = (await get(slotRef)).val() || {};
-          const lockedBy = current.lockedBy || "";
-          const lockTs = current.lockTs || 0;
-          const now = Date.now();
-          const expired = lockTs && (now - lockTs) > LOCK_EXPIRY_MS;
-          if (lockedBy && !expired && lockedBy !== CLIENT_ID) {
+          const chosen = sel.value || '';
+          if (!chosen) return; // ignore placeholder
+          const success = await tryAcquireLockTransactional(slotRef, chosen);
+          if (!success) {
             alert('Slot is locked by another user. Try again later.');
-            // revert selection to DB value
-            sel.value = current.member || '';
-            return;
+            const cur = (await get(slotRef)).val() || {};
+            sel.value = cur.member || '';
           }
-          // acquire lock for ourselves (set lockedBy + lockTs)
-          await set(ref(db, `monitoringSchedules/${shiftId}/slots/${slotTime}/lockedBy`), CLIENT_ID);
-          await set(ref(db, `monitoringSchedules/${shiftId}/slots/${slotTime}/lockTs`), Date.now());
-          // now set member
-          await set(ref(db, `monitoringSchedules/${shiftId}/slots/${slotTime}`), { member: sel.value || "", lockedBy: CLIENT_ID, lockTs: Date.now() });
         };
       });
     }
 
-    // realtime watchers to re-render shifts
-    onValue(ref(db,'monitoringSchedules/shift1'), snap => renderShift('shift1'));
-    onValue(ref(db,'monitoringSchedules/shift2'), snap => renderShift('shift2'));
-    onValue(ref(db,'monitoringSchedules/shift3'), snap => renderShift('shift3'));
+    async function tryAcquireLockTransactional(slotRef, memberKey) {
+      try {
+        const res = await runTransaction(slotRef, current => {
+          const now = Date.now();
+          if (!current) {
+            return { member: memberKey || "", lockedBy: CLIENT_ID, lockTs: now, startTs: 0, label: "" };
+          }
+          const lockedBy = current.lockedBy || "";
+          const lockTs = current.lockTs || 0;
+          const expired = lockTs && (now - lockTs) > LOCK_EXPIRY_MS;
+          if (!lockedBy || expired || lockedBy === CLIENT_ID) {
+            current.member = memberKey || "";
+            current.lockedBy = CLIENT_ID;
+            current.lockTs = now;
+            return current;
+          }
+          return; // abort
+        });
+        return !!(res && res.committed);
+      } catch {
+        return false;
+      }
+    }
 
-    // generate shift slots (auto-divide) with proper sorting
+    // watchers to re-render shifts
+    onValue(ref(db,'monitoringSchedules/shift1'), () => renderShift('shift1'));
+    onValue(ref(db,'monitoringSchedules/shift2'), () => renderShift('shift2'));
+    onValue(ref(db,'monitoringSchedules/shift3'), () => renderShift('shift3'));
+
+    // generate shift slots: now NO pre-assignment, all members default empty ("Select Member")
     function toDate(hm){ const [hh,mm]=hm.split(':').map(Number); const d=new Date(); d.setHours(hh,mm,0,0); return d; }
     function fmt(d){ let h=d.getHours(), m=d.getMinutes(), am=h>=12?'PM':'AM'; h=h%12||12; return `${String(h)}:${String(m).padStart(2,'0')} ${am}`; }
 
@@ -514,34 +497,29 @@
       const {s,e} = times[shiftId];
       let start = toDate(s); let end = toDate(e);
       if (end <= start) end = new Date(end.getTime() + 24*60*60*1000);
-      const totalMin = (end - start)/60000; const parts = checked.length; const slotMin = totalMin/parts;
+      const totalMin = (end - start)/60000;
+      const parts = checked.length; // number of slots equals number of present members
+      const slotMin = totalMin/parts;
       let cur = new Date(start);
-      
-      // Create array to store slots temporarily for sorting
+
       const slotArray = [];
-      
       for (let i=0;i<parts;i++){
         const sT = new Date(cur);
         cur.setMinutes(cur.getMinutes()+slotMin);
         const eT = new Date(cur);
         const label = `${fmt(sT)} - ${fmt(eT)}`;
-        slotArray.push({
-          label,
-          member: checked[i] || "",
-          startTime: sT.getTime() // Store timestamp for sorting
-        });
+        // NOTE: member starts empty => shows "Select Member"
+        slotArray.push({ label, member: "", startTs: sT.getTime() });
       }
-      
-      // Sort slots by start time
-      slotArray.sort((a, b) => a.startTime - b.startTime);
-      
-      // Convert to object for Firebase
+
+      slotArray.sort((a,b)=> a.startTs - b.startTs);
+
       const slots = {};
       slotArray.forEach(slot => {
-        slots[slot.label] = { member: slot.member, lockedBy: "", lockTs: 0 };
+        const key = safeKeyFromLabel(slot.label);
+        slots[key] = { label: slot.label, member: "", lockedBy: "", lockTs: 0, startTs: slot.startTs };
       });
-      
-      // persist members and slots
+
       const membersObj = {}; checked.forEach(k=>membersObj[k]=true);
       await set(ref(db, `monitoringSchedules/${shiftId}`), { start: s, end: e, members: membersObj, slots });
     };
@@ -551,61 +529,38 @@
       await set(ref(db, `monitoringSchedules/${shiftId}`), { start: times[shiftId].s, end: times[shiftId].e, members: {}, slots: {} });
     };
 
-    // ---------- Generate Output / Copy / Download ----------
+    // ---------- Output (modified to include only current selected shift) ----------
     el('btnGenerateOutput').addEventListener('click', async () => {
-      const rootSnap = await get(ref(db));
-      const data = rootSnap.exists() ? rootSnap.val() : {};
-      
-      // Get the currently selected shift from daily tasks
-      const currentShift = el('dailyShiftSelect').value;
-      let shiftLabel = '';
-      switch(currentShift) {
-        case 'shift1': shiftLabel = '1st Shift (06:30 - 14:30)'; break;
-        case 'shift2': shiftLabel = '2nd Shift (14:30 - 22:30)'; break;
-        case 'shift3': shiftLabel = '3rd Shift (22:30 - 06:30)'; break;
-        default: shiftLabel = 'Current Shift';
-      }
-      
-      let out = `IT OPERATIONS TASKS REPORT\nGenerated: ${new Date().toLocaleString()}\n\n`;
-      
-      // Only include the current shift's daily tasks
-      out += `--- DAILY TASKS (${shiftLabel}) ---\n`;
-      const daily = data.dailyTasks || {};
-      const currentShiftTasks = daily[currentShift] || {};
-      Object.entries(currentShiftTasks).forEach(([t,info]) => 
-        out += `${t} — ${info.member || 'Unassigned'} — ${info.checked ? 'Done' : 'Pending'}\n`
-      );
-      
-      out += `\n--- WEEKLY ---\n${data.weekly || ''}\n\n--- MONTHLY ---\n${data.monthly || ''}\n\n--- PATCHING ---\n${data.patching || ''}\n\n`;
-      
-      // Only include the current shift's monitoring details
-      out += `--- MONITORING (${shiftLabel}) ---\n`;
-      const sched = data.monitoringSchedules || {};
-      const currentShiftMonitoring = sched[currentShift] || {};
-      const monitoringSlots = currentShiftMonitoring.slots || {};
-      
-      // Sort monitoring slots by time
-      const sortedMonitoringSlots = Object.entries(monitoringSlots).sort((a, b) => {
-        const getStartTime = (timeStr) => {
-          const startPart = timeStr.split(' - ')[0];
-          const [time, modifier] = startPart.split(' ');
-          const [hours, minutes] = time.split(':').map(Number);
-          let totalMinutes = hours * 60 + minutes;
-          if (modifier === 'PM' && hours !== 12) totalMinutes += 12 * 60;
-          if (modifier === 'AM' && hours === 12) totalMinutes -= 12 * 60;
-          return totalMinutes;
-        };
-        return getStartTime(a[0]) - getStartTime(b[0]);
+      const selectedShift = el('dailyShiftSelect').value || 'shift1';
+      // fetch only relevant nodes
+      const dailySnap = await get(ref(db, `dailyTasks/${selectedShift}`));
+      const monitoringSnap = await get(ref(db, `monitoringSchedules/${selectedShift}`));
+      const weeklySnap = await get(ref(db, 'weekly'));
+      const monthlySnap = await get(ref(db, 'monthly'));
+      const patchingSnap = await get(ref(db, 'patching'));
+
+      const daily = dailySnap.exists() ? dailySnap.val() : {};
+      const monitoring = monitoringSnap.exists() ? monitoringSnap.val() : { start: '', end: '', slots: {} };
+
+      let out = `IT OPERATIONS TASKS REPORT - ${selectedShift.toUpperCase()}\nGenerated: ${new Date().toLocaleString()}\n\n`;
+      out += `--- DAILY TASKS (${selectedShift}) ---\n`;
+      Object.entries(daily || {}).forEach(([t, info]) => {
+        out += `${t} — ${info.member || 'Unassigned'} — ${info.checked ? 'Done' : 'Pending'}\n`;
       });
-      
-      sortedMonitoringSlots.forEach(([label, info]) => 
-        out += `${label} — ${info.member || 'Unassigned'}\n`
-      );
-      
-      if (sortedMonitoringSlots.length === 0) {
-        out += 'No monitoring slots generated yet.\n';
-      }
-      
+
+      out += `\n--- WEEKLY ---\n${weeklySnap.exists() ? weeklySnap.val() : ''}\n\n`;
+      out += `--- MONTHLY ---\n${monthlySnap.exists() ? monthlySnap.val() : ''}\n\n`;
+      out += `--- PATCHING ---\n${patchingSnap.exists() ? patchingSnap.val() : ''}\n\n`;
+
+      out += `--- MONITORING (${selectedShift}) ---\n`;
+      const slots = monitoring.slots || {};
+      // iterate sorted by startTs
+      const entries = Object.entries(slots).map(([k,v]) => [k, v]);
+      entries.sort((a,b)=> (a[1]?.startTs||0) - (b[1]?.startTs||0) || (a[0] < b[0] ? -1 : 1));
+      entries.forEach(([k, info]) => {
+        out += `${info.label || k} — ${info.member || 'Unassigned'}\n`;
+      });
+
       el('finalOutput').value = out;
       await set(ref(db,'finalOutput'), out);
     });
@@ -621,33 +576,47 @@
       const text = el('finalOutput').value || '';
       const blob = new Blob([text], {type:'text/plain'});
       const url = URL.createObjectURL(blob);
-      const a = document.createElement('a'); a.href = url; a.download = `itops-report-${new Date().toISOString().slice(0,10)}.txt`;
+      const a = document.createElement('a'); a.href = url; a.download = `itops-report-${el('dailyShiftSelect').value || 'shift'}-${new Date().toISOString().slice(0,10)}.txt`;
       document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
     });
 
-    // watch finalOutput so all clients see the latest generated report
     onValue(ref(db,'finalOutput'), snap => { if (snap.exists()) el('finalOutput').value = snap.val(); });
 
-    // Reset (manual)
+    // ---------- Reset ----------
     el('resetBtn').addEventListener('click', async () => {
-      if (!confirm('Reset ALL data in Firebase? This will clear tasks, schedules, members and texts.')) return;
-      await remove(ref(db));
-      await ensureDefaults();
+      if (!confirm('Reset ALL data to safe defaults? This will overwrite tasks, schedules, members and texts.')) return;
+      const payload = {
+        teamMembers: DEFAULT_MEMBERS,
+        dailyTasks: (function(){
+          const p = {};
+          Object.entries(DEFAULT_DAILY).forEach(([shift,arr])=>{
+            p[shift] = {};
+            arr.forEach(t => p[shift][t] = { checked:false, member:"" });
+          });
+          return p;
+        })(),
+        monitoringSchedules: {
+          shift1: { start:"06:30", end:"14:30", members:{}, slots:{} },
+          shift2: { start:"14:30", end:"22:30", members:{}, slots:{} },
+          shift3: { start:"22:30", end:"06:30", members:{}, slots:{} }
+        },
+        weekly: "",
+        monthly: "",
+        patching: "",
+        finalOutput: ""
+      };
+      await set(ref(db), payload);
       alert('Reset complete and defaults restored.');
     });
 
     // ---------- init ----------
     (async function init(){
-      console.log('Initializing app...');
       await ensureDefaults();
       showTab('daily');
-      // initial renders
       renderShift('shift1');
       renderShift('shift2');
       renderShift('shift3');
-      console.log('App initialized');
     })();
-
   </script>
 </body>
 </html>
