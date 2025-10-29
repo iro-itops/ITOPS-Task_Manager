@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8"/>
-<title>ITOPS Task Manager</title>
+<title>🚨 ITOPS Command Center 🚨</title>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <style>
   :root{
@@ -49,10 +49,16 @@
   footer { margin-top:12px; color:var(--muted); font-size:0.9rem; text-align:right; }
 
   /* presence */
-  .presence-box { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:10px; padding:8px 10px; border-radius:8px; background:#f3f4f6; }
-  .presence-header { color:var(--muted); font-weight:700; margin-right:8px; }
+  .presence-row { display:flex; gap:12px; align-items:center; justify-content:space-between; margin-bottom:8px; }
+  .presence-box { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:10px; padding:8px 10px; border-radius:8px; background:#f3f4f6; }
   .presence-item { display:inline-flex; gap:8px; align-items:center; padding:6px 8px; border-radius:6px; background:#fff; border:1px solid #eef2f6; font-weight:700; color:#0f172a; }
   .dot { width:10px; height:10px; border-radius:50%; background:#10b981; box-shadow:0 0 6px rgba(16,185,129,0.2); }
+
+  /* modal */
+  .modal-backdrop { position:fixed; inset:0; background:rgba(2,6,23,0.6); display:flex; align-items:center; justify-content:center; z-index:9999; }
+  .modal { background:white; border-radius:10px; padding:18px; width:420px; max-width:94%; box-shadow:0 10px 40px rgba(2,6,23,0.4); }
+  .modal h2 { margin:0 0 6px 0; font-size:1.05rem; }
+  .modal p { margin:0 0 12px 0; color:var(--muted); }
 
   @media (max-width:680px){
     .task-right{ width:100%; align-items:stretch; }
@@ -61,18 +67,30 @@
 </style>
 </head>
 <body>
-  <div class="wrap">
+  <!-- TRIGRAM Modal (blocks until user enters trigram) -->
+  <div id="trigramModal" class="modal-backdrop" style="display:none;">
+    <div class="modal">
+      <h2>Enter your TRIGRAM</h2>
+      <p>Please enter your TRIGRAM (example: IRO, JMA, FFA). This identifies you in the Active users list.</p>
+      <input id="trigramInput" type="text" placeholder="Enter TRIGRAM" style="width:100%; padding:10px; border-radius:8px; border:1px solid #e6eef0; font-weight:700; text-transform:uppercase;" maxlength="6" />
+      <div style="display:flex; gap:8px; margin-top:12px; justify-content:flex-end;">
+        <button id="trigramProceed" class="btn">Proceed</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="wrap" id="app" style="opacity:0; pointer-events:none;">
     <header class="card" style="display:flex;align-items:center;">
       <div>
-        <h1>IT Operations Task Manager</h1>
+        <h1>ITOPS Command Center</h1>
         <div class="sub">Realtime — all users can edit. Today's data auto-saved to Firebase.</div>
       </div>
-      <div style="margin-left:auto">
+      <div style="margin-left:auto; display:flex; gap:8px; align-items:center;">
         <button id="resetBtn" class="btn warn">Reset Today's Data</button>
+        <button id="resetTrigramBtn" class="btn alt" title="Clear stored trigram & presence">Reset Trigram</button>
       </div>
     </header>
 
-    <!-- Tabs -->
     <div class="tabs">
       <button class="tab-btn active" data-tab="daily">Daily</button>
       <button class="tab-btn" data-tab="weekly">Weekly</button>
@@ -84,10 +102,16 @@
 
     <!-- DAILY -->
     <section id="daily" class="card tab-pane active">
-      <!-- Presence area with Active users: count + list -->
-      <div class="presence-box" id="presenceBox">
-        <div class="presence-header" id="presenceHeader">Active users: 0</div>
-        <div id="presenceList" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
+      <div class="presence-row">
+        <div>
+          <div style="font-weight:700; margin-bottom:6px;">Active users: <span id="activeCount">0</span></div>
+          <div class="presence-box" id="presenceBox">
+            <div style="color:var(--muted); font-weight:600;">Loading active users...</div>
+          </div>
+        </div>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <button id="refreshPresence" class="btn alt">Refresh</button>
+        </div>
       </div>
 
       <div style="display:flex;gap:12px;align-items:center;margin-bottom:12px;">
@@ -160,24 +184,10 @@
 
   <!-- Firebase + logic -->
   <script type="module">
-    /**************************************************************************
-     * ITOPS Dashboard — Single file
-     * - Realtime Firebase Realtime DB
-     * - TRIGRAM presence (no auth) with Active users count
-     * - Daily tasks per shift (default tasks + description)
-     * - Monitoring: per-shift present members, Generate slots (divides shift), slot selection
-     * - Free-text weekly/monthly/patching
-     * - Output (current shift only) + Copy/Download
-     * - Reset today's data
-     *
-     * Comments inline to help review.
-     **************************************************************************/
-
-    // Firebase v12 modules
     import { initializeApp } from "https://www.gstatic.com/firebasejs/12.3.0/firebase-app.js";
     import { getDatabase, ref, set, onValue, get, remove, onDisconnect } from "https://www.gstatic.com/firebasejs/12.3.0/firebase-database.js";
 
-    // === Firebase config (internal; provided) ===
+    // Firebase config (kept per request)
     const firebaseConfig = {
       apiKey: "AIzaSyC56asNTd04xhDU4OlnBHS4zNxj_aiiFhM",
       authDomain: "activity-log-275ce.firebaseapp.com",
@@ -188,49 +198,46 @@
       appId: "1:436390670385:web:a4e4bf77c32d4061c76510"
     };
 
-    // Initialize Firebase
     const app = initializeApp(firebaseConfig);
     const db = getDatabase(app);
 
-    // ---------------- constants & paths ----------------
+    // constants & defaults
     const TODAY = new Date().toISOString().slice(0,10); // YYYY-MM-DD
     const ROOT = '/ITOPS_Dashboard';
     const TASKS_PATH = `${ROOT}/dailyTasks/${TODAY}`; // per-date tasks (shift -> tasks object)
     const MON_PATH = `${ROOT}/monitoring/${TODAY}`;   // per-date monitoring (shift -> { membersPresent: {}, slots: {} })
     const FREETEXT_PATH = `${ROOT}/freetext/${TODAY}`;
+    const PRESENCE_PATH = `${ROOT}/presence/${TODAY}`;
 
-    // default members per shift (static lists as requested)
     const DEFAULT_MEMBERS = {
       shift1: ["IRO","FFA","JMA","NLA","MAG","RDE"],
-	 //["PYC","CTR","CCR","LSU","HRO","DGU"], 
+	  //["PYC","CTR","CCR","LSU","HRO","DGU"] - swap nyo lang yung values sa loob ng current array
       shift2: ["DDI","CTR","HDE","MBA","ESO","AAS"],
-	  //["IRO","JRU","JMA","NLA","MAG","RDE"],
+	  //["IRO","JRU","JMA","NLA","MAG","RDE"] - swap nyo lang yung values sa loob ng current array
       shift3: ["PYC","JRU","CCR","LSU","HRO","DGU"]
-	  //["DDI","FFA","HDE","MBA","ESO","AAS"]
+	  //[DDI","FFA","HDE","MBA","ESO","AAS"] - swap nyo lang yung values sa loob ng current array
     };
 
-    // default tasks per shift (preserve order)
     const DEFAULT_TASKS = {
       shift1: ["PW","ARC","Loglogic","TM1Top","ISMS","CRITICAL","PROXY","HO","Ticket Followup","TO"],
       shift2: ["PW","ARC","ISMS","Ticket Followup","TO"],
       shift3: ["PW","ARC","SC01 | SC02 Backup","SSRS Daily Report","Ticket Cleanup","Unknown Email Report","Ticket Followup","TO"]
     };
 
-    // short hard-coded description placeholders (editable in the code)
     const DESC_PLACEHOLDER = {
       PW: "PREWORK to be sent before starting the shift",
-      ARC: "Arcsight checks",
+      ARC: "TM01 TM02 Arcsight checks",
       Loglogic: "LogLogic checks",
       TM1Top: "TM1Top monitoring",
       ISMS: "ISMS server report",
-      CRITICAL: "Critical services report",
-      PROXY: "Proxy report",
-      HO: "SPOC Handover",
-      "Ticket Followup": "Follow up on open tickets. 1st shift: ASIA | 2nd shift: EMEA | 3rd shift: AMERICA",
-      TO: "Turnover / notes"
+      CRITICAL: "Critical Serivces update",
+      PROXY: "Proxy report checks",
+      HO: "Handover email for SPOC",
+      "Ticket Followup": "Follow up on open tickets - 1st shift = ASIA | 2nd shift = EMEA | 3rd shift = AMERICA ",
+      TO: "Turnover / Reminders"
     };
 
-    // ---------------- UI refs ----------------
+    // UI refs
     const tabs = document.querySelectorAll('.tab-btn');
     const panes = document.querySelectorAll('.tab-pane');
     const dailyShift = document.getElementById('dailyShift');
@@ -254,11 +261,13 @@
     const downloadBtn = document.getElementById('downloadBtn');
 
     const resetBtn = document.getElementById('resetBtn');
+    const resetTrigramBtn = document.getElementById('resetTrigramBtn');
 
-    const presenceHeader = document.getElementById('presenceHeader');
-    const presenceList = document.getElementById('presenceList');
+    const presenceBox = document.getElementById('presenceBox');
+    const activeCountEl = document.getElementById('activeCount');
+    const refreshPresenceBtn = document.getElementById('refreshPresence');
 
-    // Tab switching (UI only)
+    // Tab switching
     tabs.forEach(t => t.addEventListener('click', () => {
       tabs.forEach(b => b.classList.remove('active'));
       panes.forEach(p => p.style.display = 'none');
@@ -266,7 +275,7 @@
       document.getElementById(t.dataset.tab).style.display = 'block';
     }));
 
-    // ---------------- helpers ----------------
+    // Helpers
     const safeKey = s => String(s).replace(/[.#$\[\]\/]/g,'_');
     function formatTimeFromMinutes(mins) {
       const h = Math.floor(mins / 60) % 24;
@@ -276,48 +285,118 @@
       return `${hh}:${String(m).padStart(2,'0')} ${ampm}`;
     }
 
-    // ---------------- PRESENCE (TRIGRAM) ----------------
-    // Prompt once and persist to localStorage
-    const PRESENCE_PATH = `${ROOT}/presence/${TODAY}`;
-    let trigram = localStorage.getItem("itopsTrigram");
-    if (!trigram) {
-      const input = prompt("Enter your TRIGRAM (e.g. IRO, JMA, FFA):");
-      trigram = (input || "ANON").toUpperCase().trim();
-      localStorage.setItem("itopsTrigram", trigram);
-    }
-    // unique session key so duplicates appear separately if same trigram in two browsers
-    const sessionId = "sess-" + Math.random().toString(36).slice(2,9);
-    const myPresenceRef = ref(db, `${PRESENCE_PATH}/${sessionId}`);
-    // write presence now and ensure removal on disconnect
-    set(myPresenceRef, { name: trigram, ts: Date.now() });
-    onDisconnect(myPresenceRef).remove();
+    // TRIGRAM modal logic & presence session setup
+    const trigramModal = document.getElementById('trigramModal');
+    const trigramInput = document.getElementById('trigramInput');
+    const trigramProceed = document.getElementById('trigramProceed');
 
-    // Render presence list + Active users count
-    function renderPresenceUI(snapshot) {
+    let trigram = localStorage.getItem("itopsTrigram");
+    let sessionId = localStorage.getItem("itopsSessionId");
+    let myPresenceRef = null;
+
+    function showApp() {
+      document.getElementById('app').style.opacity = '1';
+      document.getElementById('app').style.pointerEvents = 'auto';
+      trigramModal.style.display = 'none';
+    }
+
+    function showTrigramModal() {
+      trigramModal.style.display = 'flex';
+      trigramInput.focus();
+    }
+
+    function registerPresence(name) {
+      // create/use session id to allow multiple sessions from same trigram
+      sessionId = sessionId || ("sess-" + Math.random().toString(36).slice(2,9));
+      localStorage.setItem("itopsSessionId", sessionId);
+      myPresenceRef = ref(db, `${PRESENCE_PATH}/${sessionId}`);
+      set(myPresenceRef, { name, ts: Date.now() }).catch(()=>{ /* ignore write errors */ });
+      // ensure removal on disconnect
+      try { onDisconnect(myPresenceRef).remove(); } catch(e){ /* no-op */ }
+    }
+
+    function clearLocalPresence() {
+      // remove presence entry then remove stored trigram & sessionId
+      if (myPresenceRef) {
+        remove(myPresenceRef).catch(()=>{});
+        myPresenceRef = null;
+      }
+      localStorage.removeItem("itopsTrigram");
+      localStorage.removeItem("itopsSessionId");
+    }
+
+    // Trigram proceed button
+    trigramProceed.addEventListener('click', () => {
+      const v = (trigramInput.value || '').toUpperCase().trim();
+      if (!v) return alert('Please enter your TRIGRAM');
+      trigram = v;
+      localStorage.setItem("itopsTrigram", trigram);
+      registerPresence(trigram);
+      showApp();
+    });
+
+    // Allow pressing enter key
+    trigramInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') trigramProceed.click(); });
+
+    // Reset trigram button
+    resetTrigramBtn.addEventListener('click', () => {
+      if (!confirm('Clear your stored trigram and remove your presence?')) return;
+      clearLocalPresence();
+      // reload to show modal again
+      location.reload();
+    });
+
+    // If trigram already present, register presence immediately and hide modal
+    (function handleTrigramOnLoad(){
+      if (trigram) {
+        // if session id not stored, create new one
+        sessionId = sessionId || ("sess-" + Math.random().toString(36).slice(2,9));
+        registerPresence(trigram);
+        showApp();
+      } else {
+        // show modal
+        showTrigramModal();
+      }
+    })();
+
+    // PRESENCE UI render + realtime listening
+    function renderPresence(snapshot) {
+      presenceBox.innerHTML = '';
       const val = snapshot.exists() ? snapshot.val() : {};
-      // compute set of active sessions & unique trigrams
-      const sessions = Object.values(val || {});
-      const uniqueNames = Array.from(new Set(sessions.map(s => s.name)));
-      // header
-      presenceHeader.textContent = `Active users: ${sessions.length} (${uniqueNames.length} unique)`;
-      // list sessions
-      presenceList.innerHTML = '';
-      // show each session as presence-item (green dot + trigram)
-      Object.entries(val || {}).forEach(([k,v]) => {
+      const entries = Object.entries(val || {});
+      // Active users text shows the number of unique trigrams currently online (or sessions)
+      // As requested, show one item per session (green dot)
+      activeCountEl.textContent = entries.length;
+      if (entries.length === 0) {
+        const el = document.createElement('div');
+        el.style.color = 'var(--muted)';
+        el.style.fontWeight = '600';
+        el.textContent = 'No active users';
+        presenceBox.appendChild(el);
+        return;
+      }
+      entries.forEach(([k,v])=>{
         const item = document.createElement('div');
         item.className = 'presence-item';
         item.innerHTML = `<span class="dot" aria-hidden></span><span>${v.name}</span>`;
-        presenceList.appendChild(item);
+        presenceBox.appendChild(item);
       });
-      if (sessions.length === 0) {
-        presenceList.innerHTML = '<div style="color:var(--muted);font-weight:600;">No active users</div>';
-      }
     }
-    onValue(ref(db, PRESENCE_PATH), snap => renderPresenceUI(snap));
 
-    // ---------------- Ensure DB defaults (only if missing) ----------------
+    // realtime presence listener
+    onValue(ref(db, PRESENCE_PATH), (snap) => {
+      renderPresence(snap);
+    });
+
+    // manual refresh presence (re-reads DB once)
+    refreshPresenceBtn.addEventListener('click', async () => {
+      const snap = await get(ref(db, PRESENCE_PATH));
+      renderPresence(snap);
+    });
+
+    // Ensure defaults in DB (only set if missing)
     async function ensureDefaults() {
-      // tasks skeleton
+      // tasks skeleton per shift
       const tasksSnap = await get(ref(db, TASKS_PATH));
       if (!tasksSnap.exists()) {
         const payload = {};
@@ -341,11 +420,10 @@
       }
     }
 
-    // ---------------- Render Daily Tasks ----------------
-    // Each task card shows name, description (placeholder from code), and a select that lists only members of the selected shift.
+    // RENDER DAILY TASKS (cards aligned)
     function renderDailyTasks(shiftKey) {
       dailyTasksEl.innerHTML = "";
-      // use the DEFAULT_TASKS order; dynamic addition pushes into DEFAULT_TASKS in this session (non-persistent)
+      // keep using DEFAULT_TASKS list for order / hard-coded descriptions
       const tasksList = DEFAULT_TASKS[shiftKey] || [];
       tasksList.forEach(taskName => {
         const row = document.createElement('div');
@@ -358,21 +436,21 @@
         const right = document.createElement('div'); right.className = 'task-right';
         const select = document.createElement('select');
         select.dataset.task = taskName;
-        // placeholder "-Select-" and only members for the selected shift
-        select.innerHTML = `<option value="">-Select-</option>` + (DEFAULT_MEMBERS[shiftKey] || []).map(m => `<option value="${m}">${m}</option>`).join('');
+        // placeholder -Select-
+        select.innerHTML = `<option value="">-Select-</option>` + (DEFAULT_MEMBERS[shiftKey]||[]).map(m => `<option value="${m}">${m}</option>`).join('');
         right.appendChild(select);
 
         row.appendChild(left); row.appendChild(right);
         dailyTasksEl.appendChild(row);
 
-        // realtime listener for this task's assignee (per-date)
+        // realtime listener for this task's assignee
         const taskRef = ref(db, `${TASKS_PATH}/${shiftKey}/tasks/${safeKey(taskName)}`);
         onValue(taskRef, snap => {
           const v = snap.exists() ? snap.val() : "";
           if ((select.value || '') !== (v || '')) select.value = v || '';
         });
 
-        // when user picks assignee -> save to DB (realtime)
+        // when user picks assignee -> save
         select.addEventListener('change', () => {
           const val = select.value || "";
           set(ref(db, `${TASKS_PATH}/${shiftKey}/tasks/${safeKey(taskName)}`), val);
@@ -380,7 +458,7 @@
       });
     }
 
-    // Add new task manually (adds to DB and to local DEFAULT_TASKS list for immediate rendering)
+    // Add new task manually
     addTaskBtn.addEventListener('click', async () => {
       const name = (addTaskInput.value || '').trim();
       if (!name) return alert('Enter task name');
@@ -391,19 +469,19 @@
       renderDailyTasks(shiftKey);
     });
 
-    // Listen to top-level TASKS_PATH to re-render when tasks are added/removed externally
+    // Keep UI in sync: re-render tasks on DB change
     onValue(ref(db, TASKS_PATH), snap => {
       const shiftKey = dailyShift.value || 'shift1';
       renderDailyTasks(shiftKey);
     });
 
-    // When shift changes, re-render tasks for that shift
+    // When shift selection changes, render tasks for that shift
     dailyShift.addEventListener('change', () => {
       const sk = dailyShift.value;
       renderDailyTasks(sk);
     });
 
-    // ---------------- Free-text (Weekly/Monthly/Patching) binding ----------------
+    // FREETEXT realtime bind
     function bindFreeText(key, el) {
       const r = ref(db, `${FREETEXT_PATH}/${key}`);
       onValue(r, snap => { const v = snap.exists() ? snap.val() : ""; if (el.value !== v) el.value = v; });
@@ -413,8 +491,7 @@
     bindFreeText('monthly', monthlyText);
     bindFreeText('patching', patchingText);
 
-    // ---------------- Monitoring rendering & behaviour ----------------
-    // Render all three shift cards (checkboxes for members + slots area)
+    // MONITORING: render members checkboxes and slots per shift
     function renderMonitoring() {
       monitorGrid.innerHTML = '';
       ['shift1','shift2','shift3'].forEach(shiftKey => {
@@ -435,14 +512,14 @@
         card.appendChild(slotsWrap);
         monitorGrid.appendChild(card);
 
-        // Load present members from DB and check boxes accordingly
+        // load present members from DB and check boxes
         const presentRef = ref(db, `${MON_PATH}/${shiftKey}/membersPresent`);
         onValue(presentRef, snap => {
           const present = snap.exists() ? snap.val() : {};
           memberList.querySelectorAll('input[type=checkbox]').forEach(cb => { cb.checked = !!present[cb.dataset.member]; });
         });
 
-        // Watch slots for this shift and render them in slotsWrap
+        // watch slots for this shift and render
         const slotsRef = ref(db, `${MON_PATH}/${shiftKey}/slots`);
         onValue(slotsRef, snap => {
           const slots = snap.exists() ? snap.val() : {};
@@ -452,16 +529,15 @@
             const presentMembers = Object.keys(presentObj || {});
             slotsWrap.innerHTML = '';
             const entries = Object.entries(slots || {});
-            // sort by stored startMin for deterministic order
+            // sort by stored startMin if present for deterministic order
             entries.sort((a,b) => (a[1].startMin||0) - (b[1].startMin||0));
             if (entries.length === 0) {
               slotsWrap.innerHTML = '<div style="color:var(--muted);font-size:0.9rem;">No slots yet. Tick members and click Generate Slots.</div>';
             } else {
               entries.forEach(([slotKey, sData]) => {
                 const row = document.createElement('div'); row.className='slot-row';
-                const timeDiv = document.createElement('div'); timeDiv.className='slot-time'; timeDiv.textContent = sData.label || slotKey;
+                const timeDiv = document.createElement('div'); timeDiv.className = 'slot-time'; timeDiv.textContent = sData.label || slotKey;
                 const sel = document.createElement('select'); sel.dataset.slot = slotKey;
-                // default placeholder -Select- to avoid auto-assignment/locks
                 sel.innerHTML = `<option value="">-Select-</option>` + presentMembers.map(m => `<option value="${m}">${m}</option>`).join('');
                 sel.value = sData.member || '';
                 sel.addEventListener('change', () => {
@@ -476,7 +552,7 @@
       });
     }
 
-    // Save present members for currently selected monitorShift
+    // Save present members (persist checkboxes to DB for selected monitorShift)
     savePresentBtn.addEventListener('click', async () => {
       const shiftKey = monitorShift.value || 'shift1';
       const checked = Array.from(document.querySelectorAll(`input[type=checkbox][data-shift="${shiftKey}"]`)).filter(cb => cb.checked).map(cb => cb.dataset.member);
@@ -486,26 +562,26 @@
       alert('Saved present members for ' + shiftKey);
     });
 
-    // Generate slots: divides shift time evenly based on the number of checked members for the selected monitorShift
+    // Generate slots: divides shift time evenly based on number of checked members for the selected monitorShift
     generateBtn.addEventListener('click', async () => {
       const shiftKey = monitorShift.value || 'shift1';
       const checkedMembers = Array.from(document.querySelectorAll(`input[type=checkbox][data-shift="${shiftKey}"]`)).filter(cb => cb.checked).map(cb => cb.dataset.member);
       if (checkedMembers.length === 0) { alert('Select at least one member for this shift (tick checkboxes)'); return; }
-      // persist membersPresent
+      // save membersPresent
       const mp = {}; checkedMembers.forEach(m => mp[m] = true);
       await set(ref(db, `${MON_PATH}/${shiftKey}/membersPresent`), mp);
 
-      // shift times in minutes
+      // determine shift minutes (exact)
       const shiftTimes = {
         shift1: {startMin: 6*60 + 30, endMin: 14*60 + 30}, // 06:30 - 14:30
         shift2: {startMin: 14*60 + 30, endMin: 22*60 + 30}, // 14:30 - 22:30
-        shift3: {startMin: 22*60 + 30, endMin: (24*60) + (6*60 + 30)} // 22:30 - 06:30 next day
+        shift3: {startMin: 22*60 + 30, endMin: (24*60) + (6*60 + 30)} // 22:30 - 06:30 (next day)
       };
       const st = shiftTimes[shiftKey].startMin;
       const en = shiftTimes[shiftKey].endMin;
       const totalMin = en - st;
-      // divide evenly; last slot takes remainder
       const perSlot = Math.floor(totalMin / checkedMembers.length);
+      // create slot objects
       const slotsObj = {};
       let cur = st;
       for (let i=0;i<checkedMembers.length;i++){
@@ -520,19 +596,22 @@
       alert('Slots generated for ' + shiftKey);
     });
 
-    // Clear monitoring for selected shift
+    // Clear slots for selected monitorShift
     clearSlotsBtn.addEventListener('click', async () => {
       const shiftKey = monitorShift.value || 'shift1';
       await set(ref(db, `${MON_PATH}/${shiftKey}`), { membersPresent: {}, slots: {} });
       alert('Cleared monitoring for ' + shiftKey);
     });
 
-    // When monitorShift changed, re-render UI (slots and checkboxes are still driven by db listeners)
+    // When monitorShift changed, re-render (UI shows all shifts but reactivity handled by onValue)
     monitorShift.addEventListener('change', () => {
       renderMonitoring();
     });
 
-    // ---------------- FREETEXT live watchers ----------------
+    // MONITOR GRID initial render & DB listeners
+    renderMonitoring();
+
+    // FREETEXT watchers (initial sync + input -> DB)
     onValue(ref(db, `${FREETEXT_PATH}/weekly`), snap => { weeklyText.value = snap.exists() ? snap.val() : ''; });
     onValue(ref(db, `${FREETEXT_PATH}/monthly`), snap => { monthlyText.value = snap.exists() ? snap.val() : ''; });
     onValue(ref(db, `${FREETEXT_PATH}/patching`), snap => { patchingText.value = snap.exists() ? snap.val() : ''; });
@@ -541,26 +620,23 @@
     monthlyText.addEventListener('input', () => set(ref(db, `${FREETEXT_PATH}/monthly`), monthlyText.value));
     patchingText.addEventListener('input', () => set(ref(db, `${FREETEXT_PATH}/patching`), patchingText.value));
 
-    // ---------------- OUTPUT generation (current selected dailyShift only) ----------------
+    // OUTPUT generation: includes Daily, Weekly, Monthly, Patching, Monitoring for current selected dailyShift
     genOutputBtn.addEventListener('click', async () => {
       const shiftKey = dailyShift.value || 'shift1';
       const now = new Date();
       const generated = now.toLocaleString();
 
-      // daily tasks assignments
+      // daily tasks
       const tasksSnap = await get(ref(db, `${TASKS_PATH}/${shiftKey}/tasks`));
       const tasks = tasksSnap.exists() ? tasksSnap.val() : {};
 
-      // freetext
       const weeklySnap = await get(ref(db, `${FREETEXT_PATH}/weekly`));
       const monthlySnap = await get(ref(db, `${FREETEXT_PATH}/monthly`));
       const patchingSnap = await get(ref(db, `${FREETEXT_PATH}/patching`));
 
-      // monitoring slots for shift
       const monSnap = await get(ref(db, `${MON_PATH}/${shiftKey}/slots`));
       const monitors = monSnap.exists() ? monSnap.val() : {};
 
-      // build output
       let out = `IT OPERATIONS TASKS REPORT - ${shiftKey.toUpperCase()}\nDate: ${TODAY}\nGenerated: ${generated}\n\n`;
       out += `--- DAILY TASKS ---\n`;
       (DEFAULT_TASKS[shiftKey] || []).forEach(t => {
@@ -578,12 +654,12 @@
         out += `${v.label} — ${v.member || 'Unassigned'}\n`;
       });
 
-      // display and persist final output for today's shift
       outputBox.textContent = out;
+      // also store latest report in DB so others see it (optional)
       await set(ref(db, `${ROOT}/finalOutput/${TODAY}/${shiftKey}`), out);
     });
 
-    // Copy & Download output
+    // copy & download
     copyBtn.addEventListener('click', async () => {
       const text = outputBox.textContent || '';
       if (!text) return alert('Generate output first');
@@ -597,13 +673,13 @@
       const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `itops-${TODAY}-${dailyShift.value||'shift'}.txt`; a.click();
     });
 
-    // ---------------- Reset today's data ----------------
+    // Reset today's data
     resetBtn.addEventListener('click', async () => {
       if (!confirm('Reset ALL data for today? This will clear daily tasks assignments, freetexts, and monitoring for today.')) return;
       await remove(ref(db, TASKS_PATH));
       await remove(ref(db, MON_PATH));
       await remove(ref(db, FREETEXT_PATH));
-      // re-init defaults and UI
+      // re-initialize defaults locally & UI
       await ensureDefaults();
       renderDailyTasks(dailyShift.value || 'shift1');
       renderMonitoring();
@@ -611,15 +687,13 @@
       alert('Today data reset');
     });
 
-    // ---------------- Initialization ----------------
+    // Initial setup
     (async function init(){
-      // ensure database nodes exist for today (non-destructive)
       await ensureDefaults();
-      // initial UI render
       renderDailyTasks(dailyShift.value || 'shift1');
       renderMonitoring();
 
-      // populate freetext values (safety)
+      // ensure freetext UI gets DB values on load
       const w = await get(ref(db, `${FREETEXT_PATH}/weekly`)); if (w.exists()) weeklyText.value = w.val();
       const m = await get(ref(db, `${FREETEXT_PATH}/monthly`)); if (m.exists()) monthlyText.value = m.val();
       const p = await get(ref(db, `${FREETEXT_PATH}/patching`)); if (p.exists()) patchingText.value = p.val();
